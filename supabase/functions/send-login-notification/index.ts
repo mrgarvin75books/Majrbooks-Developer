@@ -54,8 +54,8 @@ serve(async (req) => {
         Authorization: `Bearer ${RESEND_API_KEY}`,
       },
       body: JSON.stringify({
-        from: "MajrBooks <support@majrtaxsoftware.com>",
-        to: ["support@majrtaxsoftware.com"],
+        from: "MajrBooks <support@majrbooks.com>",
+        to: ["support@majrbooks.com"],
         subject: subject,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -91,7 +91,7 @@ serve(async (req) => {
           Authorization: `Bearer ${RESEND_API_KEY}`,
         },
         body: JSON.stringify({
-          from: "MajrBooks <support@majrtaxsoftware.com>",
+          from: "MajrBooks <support@majrbooks.com>",
           to: [email],
           subject: "Welcome to MajrBooks - Your 14-Day Free Trial Has Started!",
           html: `
@@ -110,7 +110,7 @@ serve(async (req) => {
                 </ul>
               </div>
               <p>After your trial ends, you can choose a plan that fits your needs.</p>
-              <p>If you have any questions, feel free to reach out to us at support@majrtaxsoftware.com</p>
+              <p>If you have any questions, feel free to reach out to us at support@majrbooks.com</p>
               <p>Best regards,<br>The MajrBooks Team</p>
             </div>
           `,

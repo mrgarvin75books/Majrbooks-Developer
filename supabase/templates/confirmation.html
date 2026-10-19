@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Confirm your email address</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f1f5f9;padding:40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+
+          <!-- Header with logo -->
+          <tr>
+            <td style="background:linear-gradient(135deg,#1e1b4b 0%,#312e81 60%,#4f46e5 100%);padding:36px 40px;text-align:center;">
+              <img src="https://majrbooks.com/majr-books-logo-email.png" alt="MAJR Books" width="180" style="display:block;margin:0 auto 12px;height:auto;border:0;" />
+              <p style="margin:0;color:#c7d2fe;font-size:13px;letter-spacing:0.5px;">Smart Bookkeeping Made Simple</p>
+            </td>
+          </tr>
+
+          <!-- Greeting banner -->
+          <tr>
+            <td style="background:#4f46e5;padding:18px 40px;text-align:center;">
+              <p style="margin:0;color:#e0e7ff;font-size:15px;font-weight:600;">✉️ &nbsp;Confirm your email to finish signing up</p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:40px 40px 32px;">
+              <h2 style="margin:0 0 20px;color:#1e1b4b;font-size:22px;font-weight:700;">Welcome to MAJR Books</h2>
+
+              <p style="margin:0 0 28px;color:#475569;font-size:15px;line-height:1.7;">
+                Thanks for signing up! Please confirm your email address to activate your account and get started with
+                <strong style="color:#4f46e5;">MAJR Books</strong> — smart bookkeeping made simple.
+              </p>
+
+              <!-- CTA Button -->
+              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:0 0 32px;">
+                <tr>
+                  <td align="center">
+                    <a href="{{ .ConfirmationURL }}" target="_blank"
+                       style="display:inline-block;background:linear-gradient(135deg,#4f46e5,#6366f1);color:#ffffff;text-decoration:none;font-size:16px;font-weight:700;padding:16px 40px;border-radius:10px;letter-spacing:0.3px;">
+                      Confirm Email Address
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0 0 8px;color:#94a3b8;font-size:12px;text-align:center;">
+                Or copy this link into your browser:
+              </p>
+              <p style="margin:0 0 28px;color:#6366f1;font-size:12px;text-align:center;word-break:break-all;">
+                {{ .ConfirmationURL }}
+              </p>
+
+              <p style="margin:0;color:#64748b;font-size:14px;line-height:1.6;">
+                If you didn't create an account with MAJR Books, you can safely ignore this email. Questions? Reach us at
+                <a href="mailto:support@prm3tax.com" style="color:#4f46e5;text-decoration:none;">support@prm3tax.com</a> or call <strong>888-575-4776</strong>.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:24px 40px;text-align:center;">
+              <p style="margin:0 0 6px;color:#94a3b8;font-size:12px;">
+                © MAJR Books by PRM3 Tax &nbsp;|&nbsp;
+                <a href="https://majrbooks.com" style="color:#6366f1;text-decoration:none;">majrbooks.com</a>
+              </p>
+              <p style="margin:0;color:#cbd5e1;font-size:11px;">
+                You received this because someone signed up with this email address at MAJR Books.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

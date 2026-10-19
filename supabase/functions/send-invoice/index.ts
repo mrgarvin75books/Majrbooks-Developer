@@ -123,7 +123,7 @@ const handler = async (req: Request): Promise<Response> => {
 
     // Send invoice email using Resend
     const { data: emailData, error: emailError } = await resend.emails.send({
-      from: 'MajrBooks <support@majrtaxsoftware.com>',
+      from: 'MajrBooks <support@majrbooks.com>',
       to: [invoice.client_email],
       subject: `Invoice ${invoice.invoice_number} from MajrBooks`,
       html: emailHtml,

@@ -77,8 +77,8 @@ serve(async (req) => {
         },
       ],
       mode: "subscription",
-      success_url: `${req.headers.get("origin")}/dashboard?checkout=success`,
-      cancel_url: `${req.headers.get("origin")}/auth?checkout=cancelled`,
+      success_url: `${req.headers.get("origin") || Deno.env.get("APP_URL") || "https://majrbooks.com"}/dashboard?checkout=success`,
+      cancel_url: `${req.headers.get("origin") || Deno.env.get("APP_URL") || "https://majrbooks.com"}/auth?checkout=cancelled`,
       // Always collect payment method to ensure card is on file for auto-charge after trial
       payment_method_collection: "always",
       subscription_data: {},

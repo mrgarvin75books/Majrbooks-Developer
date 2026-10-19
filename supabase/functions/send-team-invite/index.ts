@@ -43,8 +43,7 @@ serve(async (req) => {
 
     // Generate invite token
     const inviteToken = crypto.randomUUID();
-    // Always use the published URL for email assets to ensure they load correctly
-    const baseUrl = "https://pocket-fin-auto.lovable.app";
+    const baseUrl = Deno.env.get('APP_URL') || "https://majrbooks.com";
     const inviteUrl = `${baseUrl}/accept-invite?token=${inviteToken}`;
     const logoUrl = `${baseUrl}/majr-books-logo-email.png`;
 
@@ -139,7 +138,7 @@ serve(async (req) => {
     `;
 
     const { data: emailData, error: emailError } = await resend.emails.send({
-      from: 'MAJRBooks <support@majrtaxsoftware.com>',
+      from: 'MAJRBooks <support@majrbooks.com>',
       to: [email],
       subject: `Your MAJRBooks Access Has Been Activated - ${businessName}`,
       html: emailHtml,

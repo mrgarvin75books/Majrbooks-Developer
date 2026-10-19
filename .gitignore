@@ -27,3 +27,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local Claude Code settings (may contain credentials)
+.claude/settings.local.json
+
+# Supabase CLI temp files
+supabase/.temp/

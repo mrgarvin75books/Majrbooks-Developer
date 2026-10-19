@@ -5,6 +5,7 @@ import ClientLayout from "@/components/ClientLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -20,6 +21,7 @@ import {
   FolderOpen,
   Eye,
   Info,
+  Sparkles,
 } from "lucide-react";
 
 interface StorageDoc {
@@ -70,6 +72,10 @@ const ClientDocuments = () => {
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [analyzingDoc, setAnalyzingDoc] = useState<string | null>(null);
+  const [analysisResult, setAnalysisResult] = useState<string>("");
+  const [analysisDocName, setAnalysisDocName] = useState<string>("");
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const storagePath = user ? `${user.id}` : null;
@@ -164,6 +170,47 @@ const ClientDocuments = () => {
       toast.error("Delete failed: " + (err?.message || "Unknown error"));
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const handleAnalyze = async (doc: StorageDoc) => {
+    if (!storagePath) return;
+    setAnalyzingDoc(doc.name);
+    try {
+      const { data: urlData, error: urlError } = await supabase.storage
+        .from(BUCKET)
+        .createSignedUrl(`${storagePath}/${doc.name}`, 300);
+      if (urlError || !urlData?.signedUrl) throw new Error("Could not get file URL");
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData?.session?.access_token;
+      if (!token) throw new Error("Not authenticated");
+
+      const name = displayName(doc.name);
+      const lower = name.toLowerCase();
+      const documentType = lower.includes("bank") || lower.includes("statement")
+        ? "Bank Statement"
+        : lower.includes("tax") || lower.includes("w2") || lower.includes("1099")
+        ? "Tax Document"
+        : lower.includes("invoice") || lower.includes("receipt")
+        ? "Receipt / Invoice"
+        : "Financial Document";
+
+      const { data, error } = await supabase.functions.invoke("analyze-client-document", {
+        body: { fileUrl: urlData.signedUrl, fileName: name, documentType },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || "Analysis failed");
+
+      setAnalysisDocName(name);
+      setAnalysisResult(data.analysis);
+      setAnalysisOpen(true);
+    } catch (err: any) {
+      toast.error("Analysis failed: " + (err?.message || "Unknown error"));
+    } finally {
+      setAnalyzingDoc(null);
     }
   };
 
@@ -299,6 +346,17 @@ const ClientDocuments = () => {
                           <Button variant="ghost" size="sm" onClick={() => handleView(doc)} title="View" className="h-8 w-8 p-0">
                             <Eye className="h-4 w-4 text-gray-500" />
                           </Button>
+                          <Button
+                            variant="ghost" size="sm"
+                            onClick={() => handleAnalyze(doc)}
+                            disabled={!!analyzingDoc}
+                            title="Analyze with AI"
+                            className="h-8 w-8 p-0 text-purple-500 hover:text-purple-700"
+                          >
+                            {analyzingDoc === doc.name
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <Sparkles className="h-4 w-4" />}
+                          </Button>
                           <Button variant="ghost" size="sm" onClick={() => handleDownload(doc)} title="Download" className="h-8 w-8 p-0">
                             <Download className="h-4 w-4 text-gray-500" />
                           </Button>
@@ -323,6 +381,22 @@ const ClientDocuments = () => {
           </div>
         </div>
       </div>
+
+      {/* AI Analysis Dialog */}
+      <Dialog open={analysisOpen} onOpenChange={setAnalysisOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-purple-500" />
+              AI Document Analysis
+            </DialogTitle>
+            <DialogDescription className="truncate">{analysisDocName}</DialogDescription>
+          </DialogHeader>
+          <div className="mt-2 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
+            {analysisResult}
+          </div>
+        </DialogContent>
+      </Dialog>
     </ClientLayout>
   );
 };

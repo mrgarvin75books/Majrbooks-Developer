@@ -3728,6 +3728,24 @@ export type Database = {
           is_valid: boolean
         }[]
       }
+      accept_team_invite: {
+        Args: { p_token: string; p_user_id: string }
+        Returns: boolean
+      }
+      validate_team_invite: {
+        Args: { p_token: string }
+        Returns: {
+          email: string
+          error_message: string
+          first_name: string
+          inviter_business_name: string
+          is_valid: boolean
+          last_name: string
+          owner_id: string
+          role: Database["public"]["Enums"]["permission_level"]
+          team_member_id: string
+        }[]
+      }
     }
     Enums: {
       app_role: "admin" | "user" | "client"

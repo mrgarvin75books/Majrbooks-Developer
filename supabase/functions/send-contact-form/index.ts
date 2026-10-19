@@ -33,8 +33,8 @@ const handler = async (req: Request): Promise<Response> => {
 
     // Send notification to support
     const emailResponse = await resend.emails.send({
-      from: "MAJR Books Contact <support@majrtaxsoftware.com>",
-      to: ["support@majrtaxsoftware.com"],
+      from: "MAJR Books Contact <support@majrbooks.com>",
+      to: ["support@majrbooks.com"],
       subject: `New Contact Form Submission from ${name}`,
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">

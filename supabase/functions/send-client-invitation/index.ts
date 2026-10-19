@@ -208,7 +208,7 @@ serve(async (req) => {
 
 
     const { data: emailData, error: emailError } = await resend.emails.send({
-      from: 'MAJR Books <support@majrtaxsoftware.com>',
+      from: 'MAJR Books <support@majrbooks.com>',
       to: [clientEmail],
       subject: `${senderName} invited you to your MAJR Books client portal`,
       html: emailHtml,

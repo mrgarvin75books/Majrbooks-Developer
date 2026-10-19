@@ -95,6 +95,7 @@ import BreakEvenCalculator from "./pages/calculators/BreakEvenCalculator";
 import PayrollCostEstimator from "./pages/calculators/PayrollCostEstimator";
 import NotFound from "./pages/NotFound";
 import AcceptClientInvite from "./pages/AcceptClientInvite";
+import AcceptInvite from "./pages/AcceptInvite";
 import ClientSettings from "./pages/ClientSettings";
 import ClientBookkeepingAI from "./pages/ClientBookkeepingAI";
 import ClientOnboarding from "./pages/ClientOnboarding";
@@ -116,6 +117,7 @@ const App = () => (
             <Route path="/" element={<Index />} />
             <Route path="/auth" element={<Auth />} />
             <Route path="/accept-client-invite" element={<AcceptClientInvite />} />
+            <Route path="/accept-invite" element={<AcceptInvite />} />
 
             {/* ── Client-only routes ── */}
             <Route element={<ClientRouteGuard requireClient />}>
@@ -135,6 +137,12 @@ const App = () => (
               <Route path="/user-permissions" element={<UserPermissions />} />
               <Route path="/bulk-client-upload" element={<BulkClientUpload />} />
               <Route path="/bulk-client-numbers" element={<BulkClientNumbers />} />
+              <Route path="/billing/client-subscriptions" element={<ClientSubscriptions />} />
+              <Route path="/billing/product-recommendations" element={<ProductRecommendations />} />
+              <Route path="/billing/discover-more" element={<DiscoverMore />} />
+              <Route path="/billing/firm-subscriptions" element={<FirmSubscriptions />} />
+              <Route path="/billing/billing-details" element={<BillingDetails />} />
+              <Route path="/billing/revenue-share" element={<RevenueShare />} />
             </Route>
 
             {/* ── Staff routes (user + admin, clients blocked) ── */}
@@ -186,12 +194,6 @@ const App = () => (
               <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />
               <Route path="/financial-dashboard" element={<FinancialDashboard />} />
               <Route path="/tasks" element={<Tasks />} />
-              <Route path="/billing/client-subscriptions" element={<ClientSubscriptions />} />
-              <Route path="/billing/product-recommendations" element={<ProductRecommendations />} />
-              <Route path="/billing/discover-more" element={<DiscoverMore />} />
-              <Route path="/billing/firm-subscriptions" element={<FirmSubscriptions />} />
-              <Route path="/billing/billing-details" element={<BillingDetails />} />
-              <Route path="/billing/revenue-share" element={<RevenueShare />} />
               <Route path="/resources" element={<Resources />} />
               <Route path="/resources/getting-started" element={<GettingStartedGuide />} />
               <Route path="/resources/invoices-guide" element={<InvoicesGuide />} />
