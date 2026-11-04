@@ -1,4 +1,4 @@
--- pgTAP tests for supabase/migrations/20261104120000_phase0_security_hardening.sql
+-- pgTAP tests for supabase/migrations/20261104130000_phase0_security_hardening.sql
 --
 -- Run against a LOCAL or STAGING database (never production):
 --   supabase start && supabase db reset && supabase test db

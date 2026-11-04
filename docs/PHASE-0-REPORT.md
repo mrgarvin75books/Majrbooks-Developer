@@ -37,7 +37,7 @@ Every service-role function now establishes who is calling and checks that the c
 | `create-checkout` | Any `priceId`; repeatable trials; redirect to any `Origin` | Price allowlist; trial only for customers who have never subscribed; redirects only to known app origins. |
 | `customer-portal` | Return URL taken from any `Origin` | Known app origins only. |
 
-### Database migration `20261104120000_phase0_security_hardening.sql`
+### Database migration `20261104130000_phase0_security_hardening.sql`
 1. **Client role restored.** `client` is granted only when the signup is flagged `is_client` **and** a live invitation exists for that email. Existing invited clients who were given `user` are backfilled to `client`.
 2. **Invoice payments** require ownership of the invoice, enforced by RLS plus a trigger that also rejects amounts of zero or less.
 3. **Support tickets.** Anonymous tickets are no longer world-readable, and tickets can't be forged under another user's id. Logged-out visitors submit through `create_support_ticket()`.
@@ -122,5 +122,5 @@ The new frontend calls `start_free_trial` and `create_support_ticket`. Those fun
    - The admin role is still granted by email in the signup trigger.
    - `has_app_role` / `get_team_member_permissions` can be queried for any user id.
    - Wildcard CORS.
-   - `clients`, `documents` and the `client-documents` / `bank-statements` bucket policies are still not in migrations. **I need a schema dump to write those safely.**
+   - The `client-documents` / `bank-statements` storage bucket policies are still not in migrations. (`clients` and `documents` are now created by `20251103172900_base_clients_and_documents.sql` from `main`.)
    - Team members still see empty books, because RLS is owner-only. That's Phase 3/7: entity membership.

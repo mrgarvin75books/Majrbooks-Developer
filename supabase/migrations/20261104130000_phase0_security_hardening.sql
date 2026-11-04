@@ -33,7 +33,7 @@ AS $function$
 DECLARE
   v_is_client BOOLEAN := COALESCE((NEW.raw_user_meta_data->>'is_client')::boolean, false);
 BEGIN
-  IF lower(NEW.email) IN ('support@majrtaxsoftware.com', 'asimmons@prm3tax.com') THEN
+  IF lower(NEW.email) IN ('support@prm3tax.com', 'support@majrtaxsoftware.com', 'asimmons@prm3tax.com') THEN
     INSERT INTO public.app_user_roles (user_id, role)
     VALUES (NEW.id, 'admin')
     ON CONFLICT (user_id, role) DO NOTHING;
