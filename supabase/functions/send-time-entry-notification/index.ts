@@ -1,10 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders, getAuthUser, getScopeOwnerId } from "../_shared/security.ts";
 
 serve(async (req) => {
   // Handle CORS preflight requests
@@ -19,6 +15,15 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
+
+    // Only the owner of the books the time entry belongs to may trigger this.
+    const caller = await getAuthUser(req);
+    if (!caller) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const callerOwnerId = await getScopeOwnerId(supabase, caller.id);
 
     // Get time entry details with employee information
     const { data: timeEntry, error: entryError } = await supabase
@@ -41,6 +46,13 @@ serve(async (req) => {
     if (entryError) {
       console.error('Error fetching time entry:', entryError);
       throw entryError;
+    }
+    // employees.user_id is the firm owner that the employee record belongs to.
+    const entryOwnerId = timeEntry.employees?.user_id;
+    if (!entryOwnerId || (entryOwnerId !== caller.id && entryOwnerId !== callerOwnerId)) {
+      return new Response(JSON.stringify({ error: 'Time entry not found' }), {
+        status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     // Get the manager who performed the action

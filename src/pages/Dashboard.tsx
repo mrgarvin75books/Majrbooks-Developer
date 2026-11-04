@@ -567,7 +567,7 @@ const Dashboard = () => {
                             <DropdownMenuContent align="end" className="w-48">
                               {client.isInvitation ? (
                                 <>
-                                  <DropdownMenuItem onClick={async () => { try { await supabase.functions.invoke("send-client-invitation", { body: { clientEmail: client.email, clientName: client.client_name, isResend: true } }); toast.success("Invitation resent successfully"); } catch { toast.error("Failed to resend invitation"); } }}>Resend invitation</DropdownMenuItem>
+                                  <DropdownMenuItem onClick={async () => { const { error } = await supabase.functions.invoke("send-client-invitation", { body: { clientEmail: client.email } }); if (error) { toast.error("Couldn't resend — send a new invitation from Client Invitations"); } else { toast.success("Invitation resent successfully"); } }}>Resend invitation</DropdownMenuItem>
                                   <DropdownMenuItem onClick={async () => { if (confirm(`Cancel invitation for ${client.client_name}?`)) { try { await supabase.from("client_invitations").update({ status: "cancelled" }).eq("id", client.id); toast.success("Invitation cancelled"); loadClients(); } catch { toast.error("Failed to cancel invitation"); } } }} className="text-destructive focus:text-destructive">Cancel invitation</DropdownMenuItem>
                                 </>
                               ) : (

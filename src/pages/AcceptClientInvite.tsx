@@ -89,46 +89,9 @@ const AcceptClientInvite = () => {
           setInvitationError("Invalid invitation link. Please request a new invitation.");
         }
       } else if (legacyFirmId) {
-        // Legacy firm-based invitation (backwards compatibility)
-        // Look up the invitation by firm_id and find a valid pending one
-        const { data: invitations, error } = await supabase
-          .from('client_invitations')
-          .select('*')
-          .eq('firm_id', legacyFirmId)
-          .eq('status', 'pending')
-          .is('used_at', null)
-          .gt('expires_at', new Date().toISOString())
-          .order('created_at', { ascending: false })
-          .limit(1);
-
-        if (error || !invitations || invitations.length === 0) {
-          // Allow signup with just firm_id for backwards compatibility
-          setInvitationData({
-            invitation_id: '',
-            client_name: '',
-            client_email: '',
-            firm_id: legacyFirmId,
-            inviter_business_name: 'MAJR Books',
-            is_valid: true,
-            error_message: null,
-          });
-        } else {
-          const inv = invitations[0];
-          setInvitationData({
-            invitation_id: inv.id,
-            client_name: inv.client_name,
-            client_email: inv.client_email,
-            firm_id: inv.firm_id,
-            inviter_business_name: inv.inviter_business_name || 'MAJR Books',
-            is_valid: true,
-            error_message: null,
-          });
-          setFormData(prev => ({
-            ...prev,
-            fullName: inv.client_name || "",
-            email: inv.client_email || "",
-          }));
-        }
+        // Old firm-wide links (?firm=<id>) let anyone register as a client of a
+        // firm without an invitation, so they are no longer accepted.
+        setInvitationError("This invitation link is no longer valid. Please ask your accountant to send you a new invitation.");
       } else {
         setInvitationError("No invitation token provided. Please use the link from your invitation email.");
       }
@@ -191,38 +154,16 @@ const AcceptClientInvite = () => {
       if (signUpError) throw signUpError;
 
       if (authData.user) {
-        // Mark invitation as used (for token-based invitations)
-        if (token) {
-          await supabase.rpc('mark_invitation_used', {
-            p_token: token,
-            p_client_user_id: authData.user.id
-          });
-        } else if (invitationData.invitation_id) {
-          // Legacy: Update invitation status directly
-          await supabase
-            .from("client_invitations")
-            .update({
-              status: "accepted",
-              responded_at: new Date().toISOString(),
-              used_at: new Date().toISOString(),
-              client_user_id: authData.user.id,
-            })
-            .eq("id", invitationData.invitation_id);
-        }
-
-        // Note: 'client' role is automatically assigned by the database trigger
-        // based on the is_client flag in user metadata
-
-        // Create a client record linked to the firm owner
-        // The firm_id in invitation is the inviter's user_id - client should appear in THEIR dashboard
-        await supabase.from('clients').insert({
-          user_id: invitationData.firm_id, // The FIRM OWNER's ID so they see the client in their dashboard
-          client_name: formData.fullName,
-          email: formData.email,
-          phone: formData.phone || null,
-          status: 'active',
-          notes: `Client portal user ID: ${authData.user.id}. Firm: ${invitationData.inviter_business_name}`,
+        // Server-side: links the account to the invitation, assigns the client
+        // role and creates the firm's client record.
+        const { data: linked, error: linkError } = await supabase.rpc('mark_invitation_used', {
+          p_token: token!,
+          p_client_user_id: authData.user.id,
         });
+        if (linkError) throw linkError;
+        if (!linked) {
+          throw new Error("Your account was created but could not be linked to this invitation. Please contact your accountant.");
+        }
       }
 
       toast({

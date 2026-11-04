@@ -272,15 +272,18 @@ const Auth = () => {
     if (!user) return;
     setCheckoutLoading(loadingKey);
     try {
-      const trialEnd = new Date();
-      trialEnd.setDate(trialEnd.getDate() + 14);
-
-      const { error } = await supabase
-        .from('profiles')
-        .update({ trial_ends_at: trialEnd.toISOString() })
-        .eq('id', user.id);
-
+      // The server grants a trial only once per account and never extends one.
+      const { data: trialEndsAt, error } = await supabase.rpc('start_free_trial');
       if (error) throw error;
+
+      if (!trialEndsAt || new Date(trialEndsAt) <= new Date()) {
+        toast({
+          variant: "destructive",
+          title: "Your free trial has already been used",
+          description: "Please choose a plan to continue using MAJR Books.",
+        });
+        return;
+      }
 
       await checkSubscription();
       toast({

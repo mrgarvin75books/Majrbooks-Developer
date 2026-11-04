@@ -5,6 +5,7 @@ interface Props {
   requireClient?: boolean; // only clients — non-clients → /dashboard
   requireStaff?: boolean;  // user or admin only — clients → /client-portal
   requireAdmin?: boolean;  // admins only — everyone else → /dashboard
+  requireOwner?: boolean;  // account owners (and admins) only — team members/clients → /dashboard
 }
 
 /**
@@ -26,8 +27,9 @@ const ClientRouteGuard = ({
   requireClient = false,
   requireStaff = false,
   requireAdmin = false,
+  requireOwner = false,
 }: Props) => {
-  const { user, isAdmin, isClient, loading } = useAuth();
+  const { user, isAdmin, isClient, isOwner, loading } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -46,6 +48,11 @@ const ClientRouteGuard = ({
   // Admin-only route accessed by non-admin → dashboard
   if (requireAdmin && !isAdmin) {
     return <Navigate to="/dashboard" replace />;
+  }
+
+  // Owner-only route (team, permissions, own billing) → dashboard for everyone else
+  if (requireOwner && !isAdmin && !isOwner) {
+    return <Navigate to={isClient ? "/client-portal" : "/dashboard"} replace />;
   }
 
   // Staff-only route accessed by a client → client portal

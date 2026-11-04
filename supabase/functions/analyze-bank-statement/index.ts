@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { assertProjectStorageUrl } from "../_shared/security.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -60,10 +61,31 @@ serve(async (req) => {
       );
     }
 
-    console.log("Analyzing bank statement PDF for account:", accountId);
+    // The account must belong to the caller, and the file must live in our own storage.
+    const { data: ownedAccount } = await supabase
+      .from("chart_of_accounts")
+      .select("id")
+      .eq("id", accountId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!ownedAccount) {
+      return new Response(
+        JSON.stringify({ error: "Account not found" }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    let safeFileUrl: string;
+    try {
+      safeFileUrl = assertProjectStorageUrl(fileUrl, "fileUrl");
+    } catch (e) {
+      return new Response(
+        JSON.stringify({ error: (e as Error).message }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Fetch the PDF and convert to base64
-    const fileResponse = await fetch(fileUrl);
+    const fileResponse = await fetch(safeFileUrl);
     if (!fileResponse.ok) {
       throw new Error(`Failed to fetch file: ${fileResponse.status}`);
     }

@@ -133,19 +133,23 @@ const App = () => (
             {/* ── Admin-only routes ── */}
             <Route element={<ClientRouteGuard requireAdmin />}>
               <Route path="/admin" element={<AdminDashboard />} />
-              <Route path="/team" element={<Team />} />
-              <Route path="/user-permissions" element={<UserPermissions />} />
               <Route path="/bulk-client-upload" element={<BulkClientUpload />} />
               <Route path="/bulk-client-numbers" element={<BulkClientNumbers />} />
               <Route path="/billing/client-subscriptions" element={<ClientSubscriptions />} />
               <Route path="/billing/product-recommendations" element={<ProductRecommendations />} />
               <Route path="/billing/discover-more" element={<DiscoverMore />} />
-              <Route path="/billing/firm-subscriptions" element={<FirmSubscriptions />} />
-              <Route path="/billing/billing-details" element={<BillingDetails />} />
               <Route path="/billing/revenue-share" element={<RevenueShare />} />
             </Route>
 
-            {/* ── Staff routes (user + admin, clients blocked) ── */}
+            {/* ── Account owners (and platform admins): manage their own team and plan */}
+            <Route element={<ClientRouteGuard requireOwner />}>
+              <Route path="/team" element={<Team />} />
+              <Route path="/user-permissions" element={<UserPermissions />} />
+              <Route path="/billing/firm-subscriptions" element={<FirmSubscriptions />} />
+              <Route path="/billing/billing-details" element={<BillingDetails />} />
+            </Route>
+
+            {/* ── Practice routes (owners, team members, admins; clients blocked) ── */}
             <Route element={<ClientRouteGuard requireStaff />}>
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/client/:id" element={<ClientDetails />} />

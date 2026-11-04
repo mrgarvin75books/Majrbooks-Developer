@@ -1,10 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import {
+  corsHeaders,
+  errorResponse,
+  isInternalRequest,
+  requireUser,
+  serviceClient,
+} from "../_shared/security.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -12,22 +13,23 @@ serve(async (req) => {
   }
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
-
-    console.log("Checking for overdue invoices...");
+    // Scheduler (CRON_SECRET / service key) processes every account;
+    // a signed-in user running it manually only processes their own invoices.
+    const scopeUserId = isInternalRequest(req) ? null : (await requireUser(req)).id;
+    const supabase = serviceClient();
 
     // Get today's date
     const today = new Date().toISOString().split("T")[0];
 
     // Find overdue invoices (due_date < today and status is pending or draft)
-    const { data: overdueInvoices, error: invoicesError } = await supabase
+    let invoiceQuery = supabase
       .from("invoices")
       .select("*")
       .lt("due_date", today)
       .in("status", ["pending", "draft"])
       .order("due_date", { ascending: true });
+    if (scopeUserId) invoiceQuery = invoiceQuery.eq("user_id", scopeUserId);
+    const { data: overdueInvoices, error: invoicesError } = await invoiceQuery;
 
     if (invoicesError) {
       console.error("Error fetching overdue invoices:", invoicesError);
@@ -44,11 +46,13 @@ serve(async (req) => {
     }
 
     // Get all active workflows with invoice_overdue trigger
-    const { data: workflows, error: workflowsError } = await supabase
+    let workflowQuery = supabase
       .from("workflows")
       .select("*")
       .eq("trigger_type", "invoice_overdue")
       .eq("status", "active");
+    if (scopeUserId) workflowQuery = workflowQuery.eq("user_id", scopeUserId);
+    const { data: workflows, error: workflowsError } = await workflowQuery;
 
     if (workflowsError) {
       console.error("Error fetching workflows:", workflowsError);
@@ -150,13 +154,6 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Error in check-overdue-invoices:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return errorResponse(error);
   }
 });

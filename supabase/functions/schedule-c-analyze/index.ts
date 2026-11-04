@@ -1,9 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { corsHeaders, HttpError, requireUser } from "../_shared/security.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+const MAX_TEXT_CHARS = 500_000;
+const MAX_PDFS = 5;
+const MAX_PDF_BASE64_CHARS = 20 * 1024 * 1024; // ~15 MB per file
 
 const systemPrompt = `You are a U.S. tax preparation assistant specializing in Schedule C (Form 1040).
 
@@ -78,10 +78,24 @@ serve(async (req) => {
     const apiKey = Deno.env.get("LOVABLE_API_KEY");
     if (!apiKey) throw new Error("LOVABLE_API_KEY is not configured");
 
+    await requireUser(req);
+
     const { transactions_text, client_name, pdf_files } = await req.json();
 
     const hasPdfs = Array.isArray(pdf_files) && pdf_files.length > 0;
-    const hasText = transactions_text && transactions_text.trim();
+    const hasText = typeof transactions_text === "string" && transactions_text.trim();
+
+    if (hasText && transactions_text.length > MAX_TEXT_CHARS) {
+      throw new HttpError(413, "Transaction text is too large. Split it into smaller batches.");
+    }
+    if (hasPdfs) {
+      if (pdf_files.length > MAX_PDFS) throw new HttpError(413, `Upload at most ${MAX_PDFS} PDFs at a time.`);
+      for (const pdf of pdf_files) {
+        if (typeof pdf?.base64 !== "string" || pdf.base64.length > MAX_PDF_BASE64_CHARS) {
+          throw new HttpError(413, "Each PDF must be 15 MB or smaller.");
+        }
+      }
+    }
 
     if (!hasText && !hasPdfs) throw new Error("No transaction data provided");
 
@@ -155,9 +169,10 @@ serve(async (req) => {
     });
   } catch (e) {
     console.error("schedule-c-analyze error:", e);
+    const status = e instanceof HttpError ? e.status : 500;
     return new Response(
       JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      { status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });

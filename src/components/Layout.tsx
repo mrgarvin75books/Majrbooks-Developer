@@ -224,7 +224,7 @@ const SortableItem = ({
 };
 
 const Layout = ({ children }: LayoutProps) => {
-  const { signOut, user, subscriptionTier, subscribed, isTrial, trialDaysRemaining, isAdmin, isClient, isStaff, loading } = useAuth();
+  const { signOut, user, subscriptionTier, subscribed, isTrial, trialDaysRemaining, isAdmin, isClient, isStaff, isOwner, loading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -600,21 +600,38 @@ const Layout = ({ children }: LayoutProps) => {
     },
   ];
 
-  const staffBlockedPaths = [
-    "/team", "/user-permissions", "/bulk-client-upload", "/bulk-client-numbers",
+  // Must mirror the route guards in App.tsx so no link leads to a redirect.
+  const adminOnlyPaths = [
+    "/bulk-client-upload", "/bulk-client-numbers",
     "/billing/client-subscriptions", "/billing/product-recommendations",
-    "/billing/discover-more", "/billing/firm-subscriptions",
-    "/billing/billing-details", "/billing/revenue-share",
+    "/billing/discover-more", "/billing/revenue-share",
   ];
+  const ownerOnlyPaths = [
+    "/team", "/user-permissions",
+    "/billing/firm-subscriptions", "/billing/billing-details",
+  ];
+  const canSeePath = (path: string): boolean => {
+    const base = path.split("?")[0];
+    if (adminOnlyPaths.includes(base)) return isAdmin;
+    if (ownerOnlyPaths.includes(base)) return isAdmin || isOwner;
+    return true;
+  };
 
   const practiceNavSections = navSections
     .map(section => ({
       ...section,
-      items: section.items.filter(item => {
-        if (item.isExternal) return true;
-        if (isStaff && staffBlockedPaths.includes(item.path)) return false;
-        return isAdmin || isStaff || canAccessPath(item.path);
-      }),
+      items: section.items
+        .map(item => item.subItems
+          ? { ...item, subItems: item.subItems.filter(sub => canSeePath(sub.path)) }
+          : item)
+        .filter(item => {
+          if (item.isExternal) return true;
+          // A group whose every link is hidden is hidden too
+          if (item.subItems && item.subItems.length === 0) return false;
+          if (!item.subItems && !canSeePath(item.path)) return false;
+          // Team members work under their owner's plan, so plan-tier gating doesn't apply to them
+          return isAdmin || isStaff || canAccessPath(item.path);
+        }),
     }))
     .filter(section => section.items.length > 0);
 

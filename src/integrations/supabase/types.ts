@@ -3686,6 +3686,18 @@ export type Database = {
         Returns: undefined
       }
       can_view_profile: { Args: { _profile_id: string }; Returns: boolean }
+      create_support_ticket: {
+        Args: {
+          p_name: string
+          p_email: string
+          p_category: string
+          p_priority: string
+          p_subject: string
+          p_message: string
+        }
+        Returns: string
+      }
+      start_free_trial: { Args: Record<PropertyKey, never>; Returns: string }
       get_safe_profile: {
         Args: { _user_id: string }
         Returns: {

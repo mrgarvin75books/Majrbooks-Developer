@@ -1,16 +1,17 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { Resend } from "https://esm.sh/resend@2.0.0";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-};
-
-interface InvoiceRequest {
-  invoiceId: string;
-}
+import {
+  assertUuid,
+  corsHeaders,
+  errorResponse,
+  escapeHtml,
+  getScopeOwnerId,
+  HttpError,
+  isInternalRequest,
+  jsonResponse,
+  requireUser,
+  serviceClient,
+} from "../_shared/security.ts";
 
 const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
@@ -18,34 +19,41 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   try {
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const resendApiKey = Deno.env.get("RESEND_API_KEY");
-    
     if (!resendApiKey) {
       throw new Error("RESEND_API_KEY is not configured");
     }
-    
-    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    const supabase = serviceClient();
     const resend = new Resend(resendApiKey);
 
-    const { invoiceId }: InvoiceRequest = await req.json();
+    // Internal callers (recurring-invoice generator) may send any invoice;
+    // signed-in users may only send invoices from the books they work in.
+    const internal = isInternalRequest(req);
+    const caller = internal ? null : await requireUser(req);
 
-    if (!invoiceId) {
-      throw new Error("Invoice ID is required");
-    }
+    const body = await req.json().catch(() => ({}));
+    const invoiceId = assertUuid(body?.invoiceId, "invoiceId");
 
     // Get invoice details
     const { data: invoice, error: invoiceError } = await supabase
       .from("invoices")
-      .select("*, invoice_line_items(*)")
+      .select("*")
       .eq("id", invoiceId)
-      .single();
+      .maybeSingle();
 
     if (invoiceError) throw invoiceError;
+    if (!invoice) throw new HttpError(404, "Invoice not found");
+
+    if (caller) {
+      const ownerId = await getScopeOwnerId(supabase, caller.id);
+      if (invoice.user_id !== ownerId) {
+        throw new HttpError(404, "Invoice not found");
+      }
+    }
 
     if (!invoice.client_email) {
-      throw new Error("Client email not found");
+      throw new HttpError(400, "This invoice has no client email address");
     }
 
     // Get line items
@@ -59,9 +67,9 @@ const handler = async (req: Request): Promise<Response> => {
       ?.map(
         (item) => `
         <tr>
-          <td style="padding: 8px; border-bottom: 1px solid #eee;">${item.description}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #eee;">${escapeHtml(item.description)}</td>
           <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">$${Number(item.rate).toFixed(2)}</td>
-          <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: center;">${item.quantity}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: center;">${escapeHtml(item.quantity)}</td>
           <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">$${(Number(item.rate) * Number(item.quantity)).toFixed(2)}</td>
         </tr>
       `
@@ -77,11 +85,11 @@ const handler = async (req: Request): Promise<Response> => {
         </head>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
           <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
-            <h1 style="color: #00C896; margin: 0;">Invoice ${invoice.invoice_number}</h1>
+            <h1 style="color: #00C896; margin: 0;">Invoice ${escapeHtml(invoice.invoice_number)}</h1>
           </div>
-          
+
           <div style="margin-bottom: 20px;">
-            <p><strong>Billed To:</strong> ${invoice.client_name}</p>
+            <p><strong>Billed To:</strong> ${escapeHtml(invoice.client_name)}</p>
             <p><strong>Date of Issue:</strong> ${new Date(invoice.issue_date).toLocaleDateString()}</p>
             <p><strong>Due Date:</strong> ${new Date(invoice.due_date).toLocaleDateString()}</p>
           </div>
@@ -109,7 +117,7 @@ const handler = async (req: Request): Promise<Response> => {
           ${invoice.notes ? `
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-top: 20px;">
               <p style="margin: 0;"><strong>Notes:</strong></p>
-              <p style="margin: 10px 0 0 0;">${invoice.notes}</p>
+              <p style="margin: 10px 0 0 0;">${escapeHtml(invoice.notes)}</p>
             </div>
           ` : ''}
 
@@ -144,26 +152,13 @@ const handler = async (req: Request): Promise<Response> => {
         .eq("id", invoiceId);
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        message: `Invoice sent to ${invoice.client_email}`,
-        emailId: emailData?.id
-      }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      }
-    );
-  } catch (error: any) {
-    console.error("Error in send-invoice function:", error);
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      }
-    );
+    return jsonResponse({
+      success: true,
+      message: `Invoice sent to ${invoice.client_email}`,
+      emailId: emailData?.id
+    });
+  } catch (error: unknown) {
+    return errorResponse(error);
   }
 };
 

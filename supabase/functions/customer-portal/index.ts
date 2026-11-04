@@ -47,7 +47,18 @@ serve(async (req) => {
     const customerId = customers.data[0].id;
     logStep("Found Stripe customer", { customerId });
 
-    const origin = req.headers.get("origin") || Deno.env.get("APP_URL") || "https://majrbooks.com";
+    // Return only to our own app, never to an arbitrary Origin header.
+    const appUrl = Deno.env.get("APP_URL") || "https://majrbooks.com";
+    const allowedOrigins = new Set([
+      appUrl,
+      "https://majrbooks.com",
+      "https://www.majrbooks.com",
+      ...(Deno.env.get("ALLOWED_APP_ORIGINS") ?? "").split(",").map((o) => o.trim()).filter(Boolean),
+    ]);
+    const requestOrigin = req.headers.get("origin") ?? "";
+    const origin = allowedOrigins.has(requestOrigin) || /^http:\/\/localhost:\d+$/.test(requestOrigin)
+      ? requestOrigin
+      : appUrl;
     const portalSession = await stripe.billingPortal.sessions.create({
       customer: customerId,
       return_url: `${origin}/dashboard`,
