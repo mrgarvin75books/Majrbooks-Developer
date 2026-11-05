@@ -99,7 +99,8 @@ const JournalEntryReport = () => {
         .eq("user_id", user.id)
         .gte("entry_date", format(startDate, "yyyy-MM-dd"))
         .lte("entry_date", format(endDate, "yyyy-MM-dd"))
-        .eq("status", "posted")
+        // The ledger = posted + voided entries (a voided entry is cancelled by its posted reversal)
+        .in("status", ["posted", "voided"])
         .order("entry_date", { ascending: true });
 
       if (error) throw error;

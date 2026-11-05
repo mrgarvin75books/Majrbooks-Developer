@@ -82,6 +82,7 @@ export type Database = {
       }
       audit_logs: {
         Row: {
+          business_id: string | null
           action: string
           created_at: string
           details: Json | null
@@ -94,6 +95,7 @@ export type Database = {
           user_id: string | null
         }
         Insert: {
+          business_id?: string | null
           action: string
           created_at?: string
           details?: Json | null
@@ -106,6 +108,7 @@ export type Database = {
           user_id?: string | null
         }
         Update: {
+          business_id?: string | null
           action?: string
           created_at?: string
           details?: Json | null
@@ -305,8 +308,94 @@ export type Database = {
         }
         Relationships: []
       }
+      business_members: {
+        Row: {
+          business_id: string
+          client_toggles: Json
+          created_at: string
+          is_lead_accountant: boolean
+          role: string
+          user_id: string
+        }
+        Insert: {
+          business_id: string
+          client_toggles?: Json
+          created_at?: string
+          is_lead_accountant?: boolean
+          role: string
+          user_id: string
+        }
+        Update: {
+          business_id?: string
+          client_toggles?: Json
+          created_at?: string
+          is_lead_accountant?: boolean
+          role?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      businesses: {
+        Row: {
+          accounting_method: string
+          archived_at: string | null
+          books_start_date: string | null
+          client_id: string | null
+          created_at: string
+          currency: string
+          fiscal_year_start_month: number
+          id: string
+          is_default: boolean
+          legal_name: string | null
+          lock_date: string | null
+          name: string
+          owner_user_id: string
+          updated_at: string
+        }
+        Insert: {
+          accounting_method?: string
+          archived_at?: string | null
+          books_start_date?: string | null
+          client_id?: string | null
+          created_at?: string
+          currency?: string
+          fiscal_year_start_month?: number
+          id?: string
+          is_default?: boolean
+          legal_name?: string | null
+          lock_date?: string | null
+          name: string
+          owner_user_id: string
+          updated_at?: string
+        }
+        Update: {
+          accounting_method?: string
+          archived_at?: string | null
+          books_start_date?: string | null
+          client_id?: string | null
+          created_at?: string
+          currency?: string
+          fiscal_year_start_month?: number
+          id?: string
+          is_default?: boolean
+          legal_name?: string | null
+          lock_date?: string | null
+          name?: string
+          owner_user_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       chart_of_accounts: {
         Row: {
+          account_class: string | null
+          account_number: string | null
+          archived_at: string | null
+          business_id: string
+          is_system: boolean
+          normal_balance: string | null
+          parent_id: string | null
+          system_key: string | null
           account_type: string
           action_type: string
           bank_balance: number | null
@@ -320,6 +409,13 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          account_class?: string | null
+          account_number?: string | null
+          archived_at?: string | null
+          business_id?: string
+          is_system?: boolean
+          parent_id?: string | null
+          system_key?: string | null
           account_type: string
           action_type?: string
           bank_balance?: number | null
@@ -333,6 +429,13 @@ export type Database = {
           user_id: string
         }
         Update: {
+          account_class?: string | null
+          account_number?: string | null
+          archived_at?: string | null
+          business_id?: string
+          is_system?: boolean
+          parent_id?: string | null
+          system_key?: string | null
           account_type?: string
           action_type?: string
           bank_balance?: number | null
@@ -1486,6 +1589,17 @@ export type Database = {
       }
       journal_entries: {
         Row: {
+          business_id: string
+          created_by: string | null
+          entry_seq: number | null
+          idempotency_key: string | null
+          is_legacy: boolean
+          posted_at: string | null
+          posted_by: string | null
+          reverses_entry_id: string | null
+          void_reason: string | null
+          voided_at: string | null
+          voided_by_entry_id: string | null
           created_at: string
           description: string | null
           entry_date: string
@@ -1499,6 +1613,17 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          business_id?: string
+          created_by?: string | null
+          entry_seq?: number | null
+          idempotency_key?: string | null
+          is_legacy?: boolean
+          posted_at?: string | null
+          posted_by?: string | null
+          reverses_entry_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by_entry_id?: string | null
           created_at?: string
           description?: string | null
           entry_date?: string
@@ -1512,6 +1637,17 @@ export type Database = {
           user_id: string
         }
         Update: {
+          business_id?: string
+          created_by?: string | null
+          entry_seq?: number | null
+          idempotency_key?: string | null
+          is_legacy?: boolean
+          posted_at?: string | null
+          posted_by?: string | null
+          reverses_entry_id?: string | null
+          void_reason?: string | null
+          voided_at?: string | null
+          voided_by_entry_id?: string | null
           created_at?: string
           description?: string | null
           entry_date?: string
@@ -1528,6 +1664,8 @@ export type Database = {
       }
       journal_entry_lines: {
         Row: {
+          business_id: string
+          line_no: number | null
           account_id: string
           created_at: string
           credit: number
@@ -1537,6 +1675,8 @@ export type Database = {
           journal_entry_id: string
         }
         Insert: {
+          business_id?: string
+          line_no?: number | null
           account_id: string
           created_at?: string
           credit?: number
@@ -1546,6 +1686,8 @@ export type Database = {
           journal_entry_id: string
         }
         Update: {
+          business_id?: string
+          line_no?: number | null
           account_id?: string
           created_at?: string
           credit?: number
@@ -3589,6 +3731,26 @@ export type Database = {
       }
     }
     Views: {
+      ledger_lines: {
+        Row: {
+          account_id: string | null
+          business_id: string | null
+          credit: number | null
+          debit: number | null
+          description: string | null
+          entry_date: string | null
+          entry_id: string | null
+          entry_number: string | null
+          line_id: string | null
+          line_no: number | null
+          memo: string | null
+          reference: string | null
+          source_id: string | null
+          source_type: string | null
+          status: string | null
+        }
+        Relationships: []
+      }
       contractors_safe: {
         Row: {
           address: string | null
@@ -3681,6 +3843,72 @@ export type Database = {
       }
     }
     Functions: {
+      account_balances: {
+        Args: { p_business_id: string; p_to: string; p_from?: string }
+        Returns: {
+          account_class: string
+          account_id: string
+          account_number: string
+          balance: number
+          name: string
+          normal_balance: string
+          total_credit: number
+          total_debit: number
+        }[]
+      }
+      account_register: {
+        Args: { p_account_id: string; p_from: string; p_to: string }
+        Returns: {
+          balance: number
+          credit: number | null
+          debit: number | null
+          entry_date: string
+          entry_id: string | null
+          entry_number: string | null
+          is_opening: boolean
+          line_description: string | null
+          memo: string | null
+          source_type: string | null
+          status: string | null
+        }[]
+      }
+      current_business: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          accounting_method: string
+          business_id: string
+          lock_date: string | null
+          name: string
+          role: string
+        }[]
+      }
+      delete_draft_entry: { Args: { p_entry_id: string }; Returns: undefined }
+      ledger_integrity: {
+        Args: { p_business_id: string }
+        Returns: { check_name: string; detail: string; ok: boolean }[]
+      }
+      post_draft_entry: { Args: { p_entry_id: string }; Returns: string }
+      post_journal_entry: {
+        Args: {
+          p_business_id: string
+          p_entry_date: string
+          p_memo: string
+          p_reference: string
+          p_lines: Json
+          p_idempotency_key?: string
+          p_as_draft?: boolean
+        }
+        Returns: string
+      }
+      reverse_journal_entry: {
+        Args: { p_entry_id: string; p_reversal_date: string; p_memo?: string }
+        Returns: string
+      }
+      set_lock_date: {
+        Args: { p_business_id: string; p_lock_date: string | null; p_reason?: string | null }
+        Returns: string
+      }
+      void_journal_entry: { Args: { p_entry_id: string; p_reason: string }; Returns: string }
       accrue_pto_for_payroll: {
         Args: { p_employee_id: string; p_user_id: string }
         Returns: undefined

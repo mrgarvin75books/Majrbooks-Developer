@@ -1,26 +1,22 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Plus, FileText, ExternalLink } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { FileText, Lock, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
-import { useNavigate } from "react-router-dom";
+import { ledgerErrorMessage, useCurrentBusiness } from "@/hooks/useCurrentBusiness";
 import CreateJournalEntryDialog from "@/components/CreateJournalEntryDialog";
-import JournalEntryDetailDialog from "@/components/JournalEntryDetailDialog";
+import JournalEntryDetailDialog, { statusLabel } from "@/components/JournalEntryDetailDialog";
 
-interface JournalEntry {
+interface EntryRow {
   id: string;
   entry_number: string;
   entry_date: string;
@@ -29,173 +25,201 @@ interface JournalEntry {
   status: string;
   source_type: string | null;
   source_id: string | null;
-  created_at: string;
+  reverses_entry_id: string | null;
+  is_legacy: boolean;
 }
 
-const JournalEntries = () => {
-  const [entries, setEntries] = useState<JournalEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
-  const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
-  const { user } = useAuth();
+const PAGE_SIZE = 100;
+
+const LockDateCard = () => {
+  const { business, canKeepBooks, refetch } = useCurrentBusiness();
   const { toast } = useToast();
-  const navigate = useNavigate();
+  const [editing, setEditing] = useState(false);
+  const [date, setDate] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  if (!business) return null;
 
-  const fetchEntries = async () => {
-    if (!user) return;
+  const current = business.lock_date;
+  const reopening = !!current && (!date || date < current);
 
-    try {
-      const { data, error } = await supabase
-        .from("journal_entries")
-        .select("*")
-        .order("entry_date", { ascending: false });
-
-      if (error) throw error;
-      setEntries(data || []);
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    const { error: err } = await supabase.rpc("set_lock_date", {
+      p_business_id: business.business_id,
+      p_lock_date: date || null,
+      p_reason: reason || null,
+    });
+    setSaving(false);
+    if (err) {
+      setError(ledgerErrorMessage(err));
+      return;
     }
-  };
-
-  useEffect(() => {
-    fetchEntries();
-  }, [user]);
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "posted":
-        return "default";
-      case "draft":
-        return "secondary";
-      default:
-        return "outline";
-    }
-  };
-
-  const handleViewLinkedTransaction = (entry: JournalEntry) => {
-    if (entry.source_type === 'invoice' && entry.source_id) {
-      toast({ title: "Opening linked invoice..." });
-      navigate(`/invoices`);
-    } else if (entry.source_type === 'payment' && entry.source_id) {
-      toast({ title: "Opening linked payment..." });
-      navigate(`/invoices`);
-    }
+    toast({ title: date ? `Books closed through ${date}` : "Books reopened" });
+    setEditing(false);
+    refetch();
   };
 
   return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base"><Lock className="h-4 w-4" /> Closed periods</CardTitle>
+        <CardDescription>
+          {current
+            ? <>Books are closed through <strong>{current}</strong>. Nothing dated on or before then can be posted or changed.</>
+            : "No period is closed yet. After you finish a month, close it so nothing earlier can change by accident."}
+        </CardDescription>
+      </CardHeader>
+      {canKeepBooks && (
+        <CardContent>
+          {!editing ? (
+            <Button variant="outline" size="sm" onClick={() => { setDate(current ?? ""); setReason(""); setError(null); setEditing(true); }}>
+              Change lock date
+            </Button>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-[200px_1fr_auto] items-end">
+              <div className="space-y-1">
+                <Label htmlFor="lock-date">Closed through</Label>
+                <Input id="lock-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="lock-reason">Reason {reopening ? "(required to reopen)" : "(optional)"}</Label>
+                <Input id="lock-reason" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={300} />
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setEditing(false)} disabled={saving}>Cancel</Button>
+                <Button onClick={save} disabled={saving || (reopening && !reason.trim())}>Save</Button>
+              </div>
+              {error && <Alert variant="destructive" className="sm:col-span-3"><AlertDescription>{error}</AlertDescription></Alert>}
+            </div>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+};
+
+const JournalEntries = () => {
+  const navigate = useNavigate();
+  const { business, canKeepBooks, isLoading: businessLoading, error: businessError } = useCurrentBusiness();
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const { data: entries = [], isLoading, error, refetch } = useQuery({
+    queryKey: ["journal-entries", business?.business_id],
+    enabled: !!business,
+    queryFn: async () => {
+      const { data, error: err } = await supabase
+        .from("journal_entries")
+        .select("id, entry_number, entry_date, description, reference, status, source_type, source_id, reverses_entry_id, is_legacy")
+        .eq("business_id", business!.business_id)
+        .order("entry_date", { ascending: false })
+        .order("entry_seq", { ascending: false, nullsFirst: false })
+        .limit(PAGE_SIZE);
+      if (err) throw err;
+      return (data ?? []) as EntryRow[];
+    },
+  });
+
+  const openSource = (e: EntryRow) => {
+    if (e.source_type === "invoice" && e.source_id) navigate(`/invoice/${e.source_id}`);
+    else if (e.source_type === "payment") navigate("/invoices");
+  };
+
+  const loadError = businessError ?? error;
+
+  return (
     <Layout>
-      <div className="p-6 space-y-6">
-        <div className="flex items-center justify-between">
+      <div className="p-4 sm:p-6 space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-3xl font-bold">Journal Entries</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold">Journal entries</h1>
             <p className="text-muted-foreground mt-1">
-              Create and manage manual journal entries
+              Every amount in your books, as debits and credits. Invoices and payments add entries here automatically.
             </p>
           </div>
-          <Button onClick={() => {
-            toast({ title: "Creating new journal entry..." });
-            setIsCreateDialogOpen(true);
-          }}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Journal Entry
-          </Button>
+          {canKeepBooks && (
+            <Button onClick={() => setIsCreateOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" /> New journal entry
+            </Button>
+          )}
         </div>
+
+        <LockDateCard />
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FileText className="h-5 w-5" />
-              All Journal Entries
-            </CardTitle>
+            <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> Entries</CardTitle>
+            {entries.length === PAGE_SIZE && (
+              <CardDescription>Showing the {PAGE_SIZE} most recent entries.</CardDescription>
+            )}
           </CardHeader>
           <CardContent>
-            {loading ? (
-              <div className="text-center py-8 text-muted-foreground">
-                Loading entries...
-              </div>
+            {loadError ? (
+              <Alert variant="destructive"><AlertDescription>{ledgerErrorMessage(loadError)}</AlertDescription></Alert>
+            ) : businessLoading || isLoading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading entries…</div>
             ) : entries.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                No journal entries yet. Create your first entry to get started.
+              <div className="text-center py-10 space-y-2">
+                <p className="font-medium">No journal entries yet</p>
+                <p className="text-sm text-muted-foreground">
+                  Sending an invoice or recording a payment creates entries automatically.
+                  Use a journal entry for adjustments such as depreciation or accruals.
+                </p>
               </div>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Entry Number</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Reference</TableHead>
-                    <TableHead>Linked Transaction</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {entries.map((entry) => (
-                    <TableRow key={entry.id}>
-                      <TableCell className="font-medium">{entry.entry_number}</TableCell>
-                      <TableCell>{format(new Date(entry.entry_date), "MMM d, yyyy")}</TableCell>
-                      <TableCell>{entry.description || "-"}</TableCell>
-                      <TableCell>{entry.reference || "-"}</TableCell>
-                      <TableCell>
-                        {entry.source_type ? (
-                          <Button
-                            variant="link"
-                            size="sm"
-                            className="h-auto p-0"
-                            onClick={() => handleViewLinkedTransaction(entry)}
-                          >
-                            {entry.source_type === 'invoice' && `Invoice #${entry.reference}`}
-                            {entry.source_type === 'payment' && `Payment - ${entry.reference}`}
-                            {entry.source_type === 'manual' && 'Manual Entry'}
-                            {!entry.source_type && 'Manual Entry'}
-                            <ExternalLink className="h-3 w-3 ml-1" />
-                          </Button>
-                        ) : (
-                          <span className="text-muted-foreground">Manual Entry</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={getStatusColor(entry.status)}>
-                          {entry.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            toast({ title: `Viewing entry ${entry.entry_number}...` });
-                            setSelectedEntryId(entry.id);
-                          }}
-                        >
-                          View Details
-                        </Button>
-                      </TableCell>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Number</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Memo</TableHead>
+                      <TableHead>Source</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {entries.map((e) => (
+                      <TableRow key={e.id} className={e.status === "voided" ? "text-muted-foreground" : undefined}>
+                        <TableCell className="font-medium whitespace-nowrap">{e.entry_number}</TableCell>
+                        <TableCell className="whitespace-nowrap">{e.entry_date}</TableCell>
+                        <TableCell className="max-w-[320px] truncate">{e.description || "—"}</TableCell>
+                        <TableCell>
+                          {e.source_type === "invoice" || e.source_type === "payment" ? (
+                            <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openSource(e)}>
+                              {e.source_type === "invoice" ? `Invoice ${e.reference ?? ""}` : `Payment ${e.reference ?? ""}`}
+                            </Button>
+                          ) : (
+                            <span className="text-muted-foreground">Manual</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={e.status === "posted" ? "default" : e.status === "voided" ? "destructive" : "secondary"}>
+                            {statusLabel(e)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="ghost" size="sm" onClick={() => setSelectedId(e.id)}>View</Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             )}
           </CardContent>
         </Card>
 
-        <CreateJournalEntryDialog
-          open={isCreateDialogOpen}
-          onOpenChange={setIsCreateDialogOpen}
-          onSuccess={fetchEntries}
-        />
-
+        <CreateJournalEntryDialog open={isCreateOpen} onOpenChange={setIsCreateOpen} onSuccess={() => refetch()} />
         <JournalEntryDetailDialog
-          entryId={selectedEntryId}
-          open={!!selectedEntryId}
-          onOpenChange={(open) => !open && setSelectedEntryId(null)}
+          entryId={selectedId}
+          open={!!selectedId}
+          onOpenChange={(o) => !o && setSelectedId(null)}
+          onChanged={() => refetch()}
         />
       </div>
     </Layout>

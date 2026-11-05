@@ -57,6 +57,7 @@ import BankReconciliation from "./pages/BankReconciliation";
 import SalesTaxSummary from "./pages/SalesTaxSummary";
 import InvoiceEditor from "./pages/InvoiceEditor";
 import ChartOfAccounts from "./pages/ChartOfAccounts";
+import AccountRegister from "./pages/AccountRegister";
 import ClientSubscriptions from "./pages/billing/ClientSubscriptions";
 import ProductRecommendations from "./pages/billing/ProductRecommendations";
 import DiscoverMore from "./pages/billing/DiscoverMore";
@@ -196,6 +197,7 @@ const App = () => (
               <Route path="/bank-reconciliation" element={<BankReconciliation />} />
               <Route path="/sales-tax-summary" element={<SalesTaxSummary />} />
               <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />
+              <Route path="/accounts/:accountId/register" element={<AccountRegister />} />
               <Route path="/financial-dashboard" element={<FinancialDashboard />} />
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/resources" element={<Resources />} />

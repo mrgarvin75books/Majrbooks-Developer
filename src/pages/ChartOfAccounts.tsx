@@ -42,6 +42,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Plus, Search, MoreVertical, FileText, TrendingUp, Trash2, Download, Upload } from "lucide-react";
 import AddEditAccountDialog from "@/components/AddEditAccountDialog";
+import { ledgerErrorMessage } from "@/hooks/useCurrentBusiness";
 
 interface ChartAccount {
   id: string;
@@ -95,7 +96,7 @@ const ChartOfAccounts = () => {
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message,
+        description: ledgerErrorMessage(error),
         variant: "destructive",
       });
     } finally {
@@ -145,7 +146,7 @@ const ChartOfAccounts = () => {
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message,
+        description: ledgerErrorMessage(error),
         variant: "destructive",
       });
     }
@@ -170,7 +171,7 @@ const ChartOfAccounts = () => {
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message,
+        description: ledgerErrorMessage(error),
         variant: "destructive",
       });
     }
@@ -226,8 +227,7 @@ const ChartOfAccounts = () => {
   };
 
   const handleViewRegister = (accountId: string) => {
-    toast({ title: "Opening account register..." });
-    navigate(`/general-ledger?account=${accountId}`);
+    navigate(`/accounts/${accountId}/register`);
   };
 
   const handleRunReport = (accountType: string) => {
