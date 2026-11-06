@@ -658,6 +658,102 @@ export type Database = {
           },
         ]
       }
+      client_statement_imports: {
+        Row: {
+          client_id: string
+          created_at: string
+          duplicate_count: number
+          file_name: string
+          id: string
+          imported_by: string | null
+          imported_count: number
+          period_end: string | null
+          period_start: string | null
+          row_count: number
+          sheet_name: string | null
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          duplicate_count?: number
+          file_name: string
+          id?: string
+          imported_by?: string | null
+          imported_count?: number
+          period_end?: string | null
+          period_start?: string | null
+          row_count?: number
+          sheet_name?: string | null
+          user_id?: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          duplicate_count?: number
+          file_name?: string
+          id?: string
+          imported_by?: string | null
+          imported_count?: number
+          period_end?: string | null
+          period_start?: string | null
+          row_count?: number
+          sheet_name?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
+      client_statement_transactions: {
+        Row: {
+          amount: number
+          category: string
+          client_id: string
+          created_at: string
+          description: string
+          direction: string
+          fingerprint: string
+          id: string
+          import_id: string | null
+          notes: string
+          txn_date: string
+          type: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          category: string
+          client_id: string
+          created_at?: string
+          description: string
+          direction: string
+          fingerprint: string
+          id?: string
+          import_id?: string | null
+          notes?: string
+          txn_date: string
+          type: string
+          updated_at?: string
+          user_id?: string
+        }
+        Update: {
+          amount?: number
+          category?: string
+          client_id?: string
+          created_at?: string
+          description?: string
+          direction?: string
+          fingerprint?: string
+          id?: string
+          import_id?: string | null
+          notes?: string
+          txn_date?: string
+          type?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       clients: {
         Row: {
           address: string | null

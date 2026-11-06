@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
+import { useSearchParams } from "react-router-dom";
 import Layout from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -129,6 +130,47 @@ export default function ScheduleC() {
     };
     fetchClients();
   }, [user]);
+
+  // Opened from a client's page (?client=<id>&year=YYYY): build the P&L from that
+  // client's imported bank transactions. No AI involved.
+  const [searchParams] = useSearchParams();
+  const fromClient = searchParams.get("client");
+  const fromYear = Number(searchParams.get("year"));
+  useEffect(() => {
+    if (!user || !fromClient || !/^[0-9a-f-]{36}$/i.test(fromClient)) return;
+    const year = Number.isInteger(fromYear) && fromYear > 1990 ? fromYear : taxYear;
+    let cancelled = false;
+    (async () => {
+      const { data: c } = await supabase.from("clients").select("client_name").eq("id", fromClient).maybeSingle();
+      const rows: { txn_date: string; description: string; amount: number; type: string; category: string; notes: string }[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from("client_statement_transactions")
+          .select("txn_date, description, amount, type, category, notes")
+          .eq("client_id", fromClient)
+          .gte("txn_date", `${year}-01-01`).lte("txn_date", `${year}-12-31`)
+          .order("txn_date").order("id").range(from, from + 999);
+        if (error) {
+          if (!cancelled) toast({ title: "Couldn't load the client's transactions", description: error.message, variant: "destructive" });
+          return;
+        }
+        rows.push(...(data ?? []));
+        if (!data || data.length < 1000) break;
+      }
+      if (cancelled) return;
+      setSelectedClientId(fromClient);
+      setClientName(c?.client_name ?? "");
+      setTaxYear(year);
+      setSavedReportId(null);
+      setIsConfirmed(false);
+      setResult(buildResult({
+        transactions: rows.map((r) => ({ date: r.txn_date, description: r.description, amount: Number(r.amount), type: r.type, category: r.category, notes: r.notes })),
+        statement_period: rows.length ? { start: rows[0].txn_date, end: rows[rows.length - 1].txn_date } : null,
+        notes: `Built from ${rows.length} imported bank transaction${rows.length === 1 ? "" : "s"}. Change categories on the client's page.`,
+      }));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, fromClient, fromYear]);
 
   // Fetch saved reports
   const fetchSavedReports = useCallback(async () => {
