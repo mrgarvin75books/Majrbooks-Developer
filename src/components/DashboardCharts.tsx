@@ -4,6 +4,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import { Area, AreaChart, Line, LineChart, Pie, PieChart, Cell, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Legend } from "recharts";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { formatMoneyCompact } from "@/lib/money";
 import { format, subMonths, subDays, startOfMonth, endOfMonth } from "date-fns";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -237,11 +238,13 @@ export const DashboardCharts = () => {
 
         return {
           month: label,
-          outstandingInvoices: Number((outstandingInvoices / 1000).toFixed(2)),
-          outstandingBills: Number((outstandingBills / 1000).toFixed(2)),
-          amountReceived: Number((amountReceived / 1000).toFixed(2)),
-          amountSpent: Number((amountSpent / 1000).toFixed(2)),
-          profit: Number(((amountReceived - amountSpent) / 1000).toFixed(2)),
+          // Plain dollars; the axis formatter shortens large values. (Dividing by
+          // 1,000 here is what produced the "$0.004k" axis labels.)
+          outstandingInvoices: Math.round(outstandingInvoices * 100) / 100,
+          outstandingBills: Math.round(outstandingBills * 100) / 100,
+          amountReceived: Math.round(amountReceived * 100) / 100,
+          amountSpent: Math.round(amountSpent * 100) / 100,
+          profit: Math.round((amountReceived - amountSpent) * 100) / 100,
         };
       });
 
@@ -520,9 +523,10 @@ export const DashboardCharts = () => {
                     stroke="hsl(var(--muted-foreground))"
                     fontSize={12}
                   />
-                  <YAxis 
+                  <YAxis
                     stroke="hsl(var(--muted-foreground))"
                     fontSize={12}
+                    tickFormatter={(v: number) => formatMoneyCompact(Math.round(v * 100))}
                   />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Legend 
@@ -617,9 +621,10 @@ export const DashboardCharts = () => {
                 stroke="hsl(var(--muted-foreground))"
                 fontSize={12}
               />
-              <YAxis 
+              <YAxis
                 stroke="hsl(var(--muted-foreground))"
                 fontSize={12}
+                tickFormatter={(v: number) => formatMoneyCompact(Math.round(v * 100))}
               />
               <ChartTooltip content={<ChartTooltipContent />} />
               <Area 

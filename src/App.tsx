@@ -58,6 +58,8 @@ import SalesTaxSummary from "./pages/SalesTaxSummary";
 import InvoiceEditor from "./pages/InvoiceEditor";
 import ChartOfAccounts from "./pages/ChartOfAccounts";
 import AccountRegister from "./pages/AccountRegister";
+import BusinessHome from "./pages/BusinessHome";
+import { WorkspaceProvider } from "./contexts/WorkspaceContext";
 import ClientSubscriptions from "./pages/billing/ClientSubscriptions";
 import ProductRecommendations from "./pages/billing/ProductRecommendations";
 import DiscoverMore from "./pages/billing/DiscoverMore";
@@ -113,6 +115,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          <WorkspaceProvider>
           <Routes>
             {/* ── Public (no auth required) ── */}
             <Route path="/" element={<Index />} />
@@ -152,6 +155,7 @@ const App = () => (
 
             {/* ── Practice routes (owners, team members, admins; clients blocked) ── */}
             <Route element={<ClientRouteGuard requireStaff />}>
+              <Route path="/home" element={<BusinessHome />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/client/:id" element={<ClientDetails />} />
               <Route path="/client-invitations" element={<ClientInvitations />} />
@@ -231,6 +235,7 @@ const App = () => (
 
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </WorkspaceProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

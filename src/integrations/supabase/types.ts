@@ -3843,6 +3843,17 @@ export type Database = {
       }
     }
     Functions: {
+      business_dashboard: {
+        Args: {
+          p_business_id: string
+          p_from: string
+          p_to: string
+          p_compare_from?: string | null
+          p_compare_to?: string | null
+        }
+        Returns: Json
+      }
+      my_permissions: { Args: { p_business_id: string }; Returns: string[] }
       account_balances: {
         Args: { p_business_id: string; p_to: string; p_from?: string }
         Returns: {

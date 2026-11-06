@@ -41,6 +41,16 @@ All colors MUST be HSL.
 
     --radius: 0.75rem;
 
+    /* MAJR Books brand. One green is reserved for primary actions; navy is
+       the chrome (sidebar); everything else is white and neutral greys. */
+    --brand-navy: 215 73% 12%;
+    --brand-navy-soft: 215 50% 22%;
+    --brand-green: 130 50% 35%;
+    --chart-income: 130 50% 38%;
+    --chart-expense: 215 35% 62%;
+    --warning: 38 92% 45%;
+    --warning-foreground: 0 0% 100%;
+
     --chart-1: 130 50% 35%;
     --chart-2: 87 48% 52%;
     --chart-3: 0 72% 51%;
