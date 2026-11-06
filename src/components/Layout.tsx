@@ -321,6 +321,7 @@ const Layout = ({ children }: LayoutProps) => {
         { path: "/trial-balance", label: "Trial Balance" },
         { path: "/revenue-by-client", label: "Revenue by Client" },
         { path: "/journal-entry-report", label: "Journal Entry Report" },
+        { path: "/schedule-c", label: "Schedule C & P&L from Statements" },
       ],
     },
     {
@@ -472,6 +473,7 @@ const Layout = ({ children }: LayoutProps) => {
     "/payroll-setup": "payroll",
     "/payroll": "payroll",
     "/tax-returns": "tax-returns",
+    "/schedule-c": "tax-returns",
     "/tasks": "tasks",
     "/team": "team",
     "/accounting": "accounting",
@@ -580,6 +582,7 @@ const Layout = ({ children }: LayoutProps) => {
       title: "Compliance",
       items: [
         { id: "tax-returns-nav", path: "/tax-returns", label: "Tax Returns", icon: FileSpreadsheet, module: "tax-returns" },
+        { id: "schedule-c-nav", path: "/schedule-c", label: "Schedule C & P&L (AI)", icon: Sparkles, module: "tax-returns" },
         { id: "tax-majr-ai-nav", path: "https://taxmajr.ai/", label: "Tax Majr AI", icon: Sparkles, isExternal: true },
         {
           id: "reports-nav",

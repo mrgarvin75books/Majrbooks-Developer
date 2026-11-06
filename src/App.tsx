@@ -57,6 +57,7 @@ import BankReconciliation from "./pages/BankReconciliation";
 import SalesTaxSummary from "./pages/SalesTaxSummary";
 import InvoiceEditor from "./pages/InvoiceEditor";
 import ChartOfAccounts from "./pages/ChartOfAccounts";
+import ScheduleC from "./pages/ScheduleC";
 import AccountRegister from "./pages/AccountRegister";
 import BusinessHome from "./pages/BusinessHome";
 import ClientSubscriptions from "./pages/billing/ClientSubscriptions";
@@ -163,6 +164,7 @@ const App = () => (
               <Route path="/invoice-templates" element={<InvoiceTemplates />} />
               <Route path="/invoice/:id?" element={<InvoiceEditor />} />
               <Route path="/tax-returns" element={<TaxReturns />} />
+              <Route path="/schedule-c" element={<ScheduleC />} />
               <Route path="/tax-majr-ai" element={<TaxMajrAiLogin />} />
               <Route path="/tax-majr-ai-dashboard" element={<TaxMajrAi />} />
               <Route path="/bookkeeping" element={<BookkeepingDashboard />} />
