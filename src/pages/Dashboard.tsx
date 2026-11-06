@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useSearchParams, Link, Navigate } from "react-router-dom";
-import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { getScopeOwnerId } from "@/lib/scopeOwner";
@@ -13,10 +12,12 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Search, MoreHorizontal, ChevronDown, Upload, Settings, Info, Users, FileText, TrendingUp, AlertCircle, UserPlus, Clock } from "lucide-react";
 import { ChatWidget } from "@/components/ChatWidget";
 import { AddClientDialog } from "@/components/AddClientDialog";
+import { formatMoneyCompact } from "@/lib/money";
 import { UpcomingRecurringInvoices } from "@/components/UpcomingRecurringInvoices";
 import { UpgradePlansSection } from "@/components/dashboard/UpgradePlansSection";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Cell } from "recharts";
 
 // Combined client type that includes both actual clients and pending invitations
 interface CombinedClient {
@@ -35,7 +36,6 @@ interface CombinedClient {
 const Dashboard = () => {
   const { user, loading: authLoading, isTrial, trialDaysRemaining, subscribed, checkSubscription, isAdmin } = useAuth();
   const navigate = useNavigate();
-  const { workspace, ready: workspaceReady } = useWorkspace();
   const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
   const VALID_TABS = ["dashboard", "bookkeeping", "payroll", "multi-entity"];
@@ -218,11 +218,6 @@ const Dashboard = () => {
     }
   }, [user, searchQuery, statusFilter]);
 
-  // In the Business workspace, "home" is the business dashboard.
-  if (workspaceReady && workspace === "business") {
-    return <Navigate to="/home" replace />;
-  }
-
   if (authLoading || loading) {
     return (
       <Layout>
@@ -242,51 +237,208 @@ const Dashboard = () => {
     <Layout>
       <div className="space-y-6">
 
-        {/* Practice summary: one row of the numbers that drive work (blueprint) */}
-        <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Practice</h1>
-          <p className="text-muted-foreground mt-1">
-            Hello {user?.user_metadata?.full_name?.split(" ")[0] || user?.email?.split("@")[0]}. Here is where your clients stand.
-          </p>
-        </div>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          {[
-            { label: "Active clients", value: stats.totalClients, hint: stats.totalClients === 0 ? "Add your first client below" : "Clients with active books", to: "/dashboard" },
-            { label: "Pending signups", value: stats.pendingSignups, hint: stats.accountsCreated > 0 ? `${stats.accountsCreated} accounts created so far` : "Invited, no account yet", to: "/client-invitations" },
-            { label: "Returns to review", value: stats.pendingReviews, hint: "Tax returns waiting for review", to: "/tax-returns" },
-            { label: "Returns in progress", value: stats.activeReturns, hint: "Not yet filed", to: "/tax-returns" },
-          ].map((t) => (
-            <Link key={t.label} to={t.to} className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <Card className="h-full transition-shadow hover:shadow-md">
-                <CardContent className="p-5">
-                  <p className="text-sm text-muted-foreground">{t.label}</p>
-                  <p className="text-2xl font-semibold mt-1 tabular-nums">{t.value}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{t.hint}</p>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+        {/* Welcome Banner */}
+        <div className="rounded-xl overflow-hidden" style={{ background: "linear-gradient(135deg, #0f1f3d 0%, #1a3a6b 60%, #0f1f3d 100%)" }}>
+          <div className="p-8 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+            <div>
+              <h1 className="text-3xl font-bold text-white mb-1">
+                Welcome back, {user?.user_metadata?.full_name?.split(" ")[0] || user?.email?.split("@")[0] || "support"}
+              </h1>
+              <p className="text-blue-200 text-sm">Here's what's happening with your practice today</p>
+            </div>
+            <div className="flex gap-8">
+              <div className="text-center">
+                <div className="text-3xl font-bold text-white">{stats.totalClients}</div>
+                <div className="text-blue-200 text-xs uppercase tracking-wide mt-1">Total Clients</div>
+              </div>
+              <div className="text-center">
+                <div className="text-3xl font-bold text-white">{stats.activeReturns}</div>
+                <div className="text-blue-200 text-xs uppercase tracking-wide mt-1">Active Returns</div>
+              </div>
+              <div className="text-center">
+                <div className="text-3xl font-bold text-white">{stats.pendingReviews}</div>
+                <div className="text-blue-200 text-xs uppercase tracking-wide mt-1">Pending Reviews</div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Client list header */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-xl font-semibold">Clients</h2>
-          <div className="flex flex-wrap items-center gap-3">
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Total Clients</p>
+                  <p className="text-2xl font-bold mt-1">{stats.totalClients}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Active clients</p>
+                </div>
+                <div className="h-10 w-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                  <Users className="h-5 w-5 text-green-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Active Subscriptions</p>
+                  <p className="text-2xl font-bold mt-1">{stats.activeSubscriptions}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Recurring invoices</p>
+                </div>
+                <div className="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                  <TrendingUp className="h-5 w-5 text-blue-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Monthly Revenue</p>
+                  <p className="text-2xl font-bold mt-1">${stats.monthlyRevenue.toLocaleString()}</p>
+                  <p className="text-xs text-muted-foreground mt-1">This calendar month</p>
+                </div>
+                <div className="h-10 w-10 rounded-full bg-yellow-100 dark:bg-yellow-900/30 flex items-center justify-center">
+                  <TrendingUp className="h-5 w-5 text-yellow-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">Pending Documents</p>
+                  <p className="text-2xl font-bold mt-1">{stats.pendingDocs}</p>
+                  <p className="text-xs text-muted-foreground mt-1">Awaiting review</p>
+                </div>
+                <div className="h-10 w-10 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
+                  <FileText className="h-5 w-5 text-orange-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Admin-only: client signup activity */}
+        {isAdmin && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Client Accounts Created</p>
+                    <p className="text-2xl font-bold mt-1">{stats.accountsCreated}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Invitations accepted &amp; signed up</p>
+                  </div>
+                  <div className="h-10 w-10 rounded-full bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                    <UserPlus className="h-5 w-5 text-emerald-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Pending Signups</p>
+                    <p className="text-2xl font-bold mt-1">{stats.pendingSignups}</p>
+                    <p className="text-xs text-muted-foreground mt-1">Invited, not yet created an account</p>
+                  </div>
+                  <div className="h-10 w-10 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                    <Clock className="h-5 w-5 text-amber-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Charts Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base">Revenue Overview</CardTitle>
+              </div>
+              <p className="text-xs text-muted-foreground">Last 12 months</p>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={revenueData}>
+                  <defs>
+                    <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => formatMoneyCompact(Math.round(v * 100))} />
+                  <Tooltip formatter={(v: number) => [`$${v.toLocaleString()}`, "Revenue"]} />
+                  <Area type="monotone" dataKey="revenue" stroke="#22c55e" fill="url(#revenueGrad)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Client Pipeline</CardTitle>
+              <p className="text-xs text-muted-foreground">Stage breakdown</p>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={pipelineData} layout="vertical">
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis type="number" tick={{ fontSize: 11 }} />
+                  <YAxis dataKey="stage" type="category" tick={{ fontSize: 11 }} width={70} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#22c55e" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Header Section */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">MAJR Books</h1>
+            {isTrial && trialDaysRemaining !== null && (
+              <p className="text-sm text-muted-foreground mt-1">
+                🎉 Free trial: {trialDaysRemaining} day{trialDaysRemaining !== 1 ? 's' : ''} remaining
+              </p>
+            )}
+          </div>
+          <div className="flex items-center space-x-3">
+            <Button variant="link" className="text-primary" onClick={() => navigate("/resources/contact-support")}>Feedback?</Button>
             
             {isTrial && (
-              <Button variant="outline" onClick={() => setShowUpgradeSection(!showUpgradeSection)}>
-                {showUpgradeSection ? "Hide plans" : "See plans"}
+              <Button 
+                variant="default"
+                onClick={() => setShowUpgradeSection(!showUpgradeSection)}
+                className="bg-primary hover:bg-primary/90"
+              >
+                🚀 Upgrade Now
               </Button>
             )}
-
-            {/* Bulk upload is an admin tool (its route is admin-only) */}
+            
+            {/* The bulk upload page is admin-only; others were bounced back */}
             {isAdmin && (
-              <Button variant="outline" onClick={() => navigate("/bulk-client-upload")}>
+              <Button
+                variant="outline"
+                onClick={() => navigate("/bulk-client-upload")}
+                className="border-green-600 text-green-600 hover:bg-green-50"
+              >
                 <Upload className="mr-2 h-4 w-4" />
-                Bulk upload
+                Bulk Upload
               </Button>
             )}
-
+            
             <AddClientDialog onClientAdded={loadClients} />
           </div>
         </div>

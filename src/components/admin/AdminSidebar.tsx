@@ -39,7 +39,7 @@ const adminNavItems = [
     items: [
       { path: "/dashboard", label: "Clients", icon: Users },
       { path: "/invoices", label: "Invoicing & Billing", icon: Receipt },
-      { path: "/payroll", label: "Payroll", icon: CreditCard },
+      { path: "/payroll-dashboard", label: "Payroll", icon: CreditCard },
       { path: "/tax-returns", label: "Tax Forms", icon: FileText },
       { path: "/reports", label: "Reports", icon: BarChart3 },
     ],

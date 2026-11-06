@@ -7,7 +7,6 @@ import {
 } from "@/components/ui/command";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
-import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useCurrentBusiness } from "@/hooks/useCurrentBusiness";
 import { getScopeOwnerId } from "@/lib/scopeOwner";
 import { formatMoney, toCents } from "@/lib/money";
@@ -27,13 +26,19 @@ function useDebounced<T>(value: T, ms: number) {
 }
 
 /**
- * Ctrl/⌘+K search. Pages from the current workspace's menu, plus records:
- * in a business, its invoices and accounts; in Practice, the firm's clients.
+ * Ctrl/⌘+K search over pages the user can open plus records: the firm's
+ * clients, the business's invoices and its accounts.
+ * `trigger` lets the caller keep its own look for the search box.
  */
-export function GlobalSearch({ sections }: { sections: NavSection[] }) {
+export function GlobalSearch({
+  sections,
+  trigger,
+}: {
+  sections: NavSection[];
+  trigger?: (open: () => void) => React.ReactNode;
+}) {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { workspace } = useWorkspace();
   const { business } = useCurrentBusiness();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -60,18 +65,15 @@ export function GlobalSearch({ sections }: { sections: NavSection[] }) {
   }, [sections]);
 
   const { data: records } = useQuery({
-    queryKey: ["global-search", workspace, business?.business_id, term],
+    queryKey: ["global-search", business?.business_id, term],
     enabled: open && !!user && term.length >= 2,
     staleTime: 30_000,
     queryFn: async () => {
       const like = `%${term}%`;
-      if (workspace === "practice") {
-        const ownerId = await getScopeOwnerId(user!.id);
-        const { data } = await supabase.from("clients").select("id, client_name, email")
-          .eq("user_id", ownerId).or(`client_name.ilike.${like},email.ilike.${like}`).limit(6);
-        return { clients: data ?? [], invoices: [], accounts: [] };
-      }
-      const [inv, acc] = await Promise.all([
+      const ownerId = await getScopeOwnerId(user!.id);
+      const [cli, inv, acc] = await Promise.all([
+        supabase.from("clients").select("id, client_name, email")
+          .eq("user_id", ownerId).or(`client_name.ilike.${like},email.ilike.${like}`).limit(6),
         supabase.from("invoices").select("id, invoice_number, client_name, amount, status")
           .eq("user_id", user!.id).or(`invoice_number.ilike.${like},client_name.ilike.${like}`)
           .order("issue_date", { ascending: false }).limit(6),
@@ -80,7 +82,7 @@ export function GlobalSearch({ sections }: { sections: NavSection[] }) {
               .eq("business_id", business.business_id).ilike("name", like).limit(6)
           : Promise.resolve({ data: [] as { id: string; name: string; account_number: string | null }[] }),
       ]);
-      return { clients: [], invoices: inv.data ?? [], accounts: acc.data ?? [] };
+      return { clients: cli.data ?? [], invoices: inv.data ?? [], accounts: acc.data ?? [] };
     },
   });
 
@@ -91,18 +93,18 @@ export function GlobalSearch({ sections }: { sections: NavSection[] }) {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="flex h-9 w-full max-w-md items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground hover:bg-accent/50 transition-colors"
-        aria-label="Search"
-      >
-        <Search className="h-4 w-4 shrink-0" />
-        <span className="flex-1 text-left truncate">
-          {workspace === "practice" ? "Search clients and pages" : "Search invoices, accounts and pages"}
-        </span>
-        <kbd className="hidden sm:inline-flex items-center rounded border bg-muted px-1.5 text-[10px] font-medium">Ctrl K</kbd>
-      </button>
+      {trigger ? trigger(() => setOpen(true)) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex h-9 w-full max-w-md items-center gap-2 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground hover:bg-accent/50 transition-colors"
+          aria-label="Search"
+        >
+          <Search className="h-4 w-4 shrink-0" />
+          <span className="flex-1 text-left truncate">Search clients, invoices, accounts and pages</span>
+          <kbd className="hidden sm:inline-flex items-center rounded border bg-muted px-1.5 text-[10px] font-medium">Ctrl K</kbd>
+        </button>
+      )}
 
       <CommandDialog open={open} onOpenChange={setOpen}>
         <CommandInput placeholder="Type to search…" value={query} onValueChange={setQuery} />

@@ -59,7 +59,6 @@ import InvoiceEditor from "./pages/InvoiceEditor";
 import ChartOfAccounts from "./pages/ChartOfAccounts";
 import AccountRegister from "./pages/AccountRegister";
 import BusinessHome from "./pages/BusinessHome";
-import { WorkspaceProvider } from "./contexts/WorkspaceContext";
 import ClientSubscriptions from "./pages/billing/ClientSubscriptions";
 import ProductRecommendations from "./pages/billing/ProductRecommendations";
 import DiscoverMore from "./pages/billing/DiscoverMore";
@@ -115,7 +114,6 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
-          <WorkspaceProvider>
           <Routes>
             {/* ── Public (no auth required) ── */}
             <Route path="/" element={<Index />} />
@@ -235,7 +233,6 @@ const App = () => (
 
             <Route path="*" element={<NotFound />} />
           </Routes>
-          </WorkspaceProvider>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
