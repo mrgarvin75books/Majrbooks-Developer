@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { useSearchParams } from "react-router-dom";
+import { detectColumns, findHeaderRow, parseLines, type Cell, type ParsedLine } from "@/lib/statementImport";
+import { categorize } from "@/lib/categorizeRules";
 import Layout from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -78,6 +80,22 @@ interface UploadedFile {
   content: string;
   isPdf?: boolean;
   pdfBase64?: string;
+  /** Excel/CSV lines read in the browser (no AI needed). */
+  lines?: ParsedLine[];
+}
+
+/** Reads every sheet and keeps the one with the most recognisable transactions. */
+function readStatementWorkbook(wb: XLSX.WorkBook): ParsedLine[] {
+  let best: ParsedLine[] = [];
+  for (const name of wb.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json<Cell[]>(wb.Sheets[name], { header: 1, raw: true, defval: null, blankrows: false });
+    const h = findHeaderRow(rows);
+    const map = detectColumns(rows[h] ?? []);
+    if (map.date === null || (map.amount === null && map.debit === null && map.credit === null)) continue;
+    const { lines } = parseLines(rows, h, map);
+    if (lines.length > best.length) best = lines;
+  }
+  return best;
 }
 
 const formatCurrency = (n: number) =>
@@ -495,8 +513,27 @@ export default function ScheduleC() {
     let content = "";
     let isPdf = false;
     let pdfBase64 = "";
+    let lines: ParsedLine[] | undefined;
 
-    if (file.type === "text/csv" || file.name.endsWith(".csv")) {
+    if (/\.(xlsx|xls|csv)$/i.test(file.name)) {
+      // Spreadsheets are read right here in the browser, no AI needed.
+      try {
+        const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true, raw: false });
+        lines = readStatementWorkbook(wb);
+        content = wb.SheetNames.map((n) => XLSX.utils.sheet_to_csv(wb.Sheets[n])).join("\n\n");
+      } catch {
+        toast({ title: "Couldn't open the file", description: `${file.name} isn't a readable Excel or CSV file.`, variant: "destructive" });
+        return null;
+      }
+      if (!lines.length) {
+        toast({
+          title: "No transactions found",
+          description: `${file.name}: couldn't find Date and Amount (or Debit/Credit) columns. Check the file has a header row with those column names.`,
+          variant: "destructive",
+        });
+        return null;
+      }
+    } else if (file.type === "text/csv") {
       content = await file.text();
     } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
       // Convert PDF to full base64 for AI vision processing
@@ -532,7 +569,7 @@ export default function ScheduleC() {
       content = await file.text();
     }
 
-    return { name: file.name, size: file.size, content, isPdf, pdfBase64 };
+    return { name: file.name, size: file.size, content, isPdf, pdfBase64, lines };
   }, []);
 
   const addFiles = useCallback(async (files: FileList | globalThis.File[]) => {
@@ -593,9 +630,26 @@ export default function ScheduleC() {
       toast({ title: "No data", description: "Please upload a file or paste transaction data.", variant: "destructive" });
       return;
     }
-    setIsAnalyzing(true);
     setIsConfirmed(false);
     setSavedReportId(null);
+
+    // Only Excel/CSV files: categorize with rules in the browser, no AI call.
+    if (uploadedFiles.length > 0 && uploadedFiles.every((f) => f.lines?.length)) {
+      const all = uploadedFiles.flatMap((f) => f.lines!).sort((a, b) => a.date.localeCompare(b.date));
+      const built = buildResult({
+        transactions: all.map((l) => ({ date: l.date, description: l.description, amount: l.cents / 100, ...categorize(l.description, l.direction) })),
+        statement_period: { start: all[0].date, end: all[all.length - 1].date },
+        notes: "Read from your spreadsheet and sorted with built-in rules. Check anything marked Needs review.",
+      });
+      setResult(built);
+      const endYear = Number(built.statement_period!.end.slice(0, 4));
+      if (endYear > 1990 && endYear < 2100) setTaxYear(endYear);
+      const review = built.summary.excluded.needsReviewCount;
+      toast({ title: "Done", description: `${all.length} transactions read${review ? ` · ${review} need your review` : ""}.` });
+      return;
+    }
+
+    setIsAnalyzing(true);
     try {
       // Collect text content (non-PDF)
       const textParts = uploadedFiles
@@ -647,6 +701,7 @@ export default function ScheduleC() {
       setIsAnalyzing(false);
     }
   }, [rawText, clientName, uploadedFiles]);
+  const spreadsheetOnly = uploadedFiles.length > 0 && uploadedFiles.every((f) => f.lines?.length);
 
   return (
     <Layout>
@@ -861,7 +916,7 @@ export default function ScheduleC() {
               ) : (
                 <>
                   <ClipboardList className="h-4 w-4 mr-2" />
-                  Analyze & Categorize
+                  {spreadsheetOnly ? "Build P&L and Schedule C" : "Analyze & Categorize"}
                 </>
               )}
             </Button>
