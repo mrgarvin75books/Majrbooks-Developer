@@ -215,7 +215,15 @@ Deno.serve(async (req) => {
     }
     if (error instanceof Anthropic.BadRequestError) {
       console.error("Anthropic bad request:", error.message);
-      return jsonResponse({ error: "The AI couldn't read this file. Make sure PDFs aren't password-protected." }, 422);
+      if (/credit balance/i.test(error.message)) {
+        return jsonResponse({
+          error: "The AI service account has run out of credit. Add credit at console.anthropic.com (Plans & Billing), then try again.",
+        }, 402);
+      }
+      if (/pdf|document|password|encrypt/i.test(error.message)) {
+        return jsonResponse({ error: "The AI couldn't read one of these files. Make sure PDFs aren't password-protected or scanned upside down." }, 422);
+      }
+      return jsonResponse({ error: `The AI service rejected the request: ${error.message.slice(0, 300)}` }, 422);
     }
     if (error instanceof Anthropic.APIError) {
       console.error(`Anthropic API error ${error.status}:`, error.message);
