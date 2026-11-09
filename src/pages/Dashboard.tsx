@@ -12,7 +12,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Search, MoreHorizontal, ChevronDown, Upload, Settings, Info, Users, FileText, TrendingUp, AlertCircle, UserPlus, Clock } from "lucide-react";
 import { ChatWidget } from "@/components/ChatWidget";
 import { AddClientDialog } from "@/components/AddClientDialog";
-import { DashboardCharts } from "@/components/DashboardCharts";
+import { formatMoneyCompact } from "@/lib/money";
 import { UpcomingRecurringInvoices } from "@/components/UpcomingRecurringInvoices";
 import { UpgradePlansSection } from "@/components/dashboard/UpgradePlansSection";
 import { toast } from "sonner";
@@ -377,7 +377,7 @@ const Dashboard = () => {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                   <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v/1000}k`} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => formatMoneyCompact(Math.round(v * 100))} />
                   <Tooltip formatter={(v: number) => [`$${v.toLocaleString()}`, "Revenue"]} />
                   <Area type="monotone" dataKey="revenue" stroke="#22c55e" fill="url(#revenueGrad)" strokeWidth={2} />
                 </AreaChart>
@@ -415,7 +415,7 @@ const Dashboard = () => {
             )}
           </div>
           <div className="flex items-center space-x-3">
-            <Button variant="link" className="text-primary">Feedback?</Button>
+            <Button variant="link" className="text-primary" onClick={() => navigate("/resources/contact-support")}>Feedback?</Button>
             
             {isTrial && (
               <Button 
@@ -427,17 +427,17 @@ const Dashboard = () => {
               </Button>
             )}
             
-            <Button 
-              variant="outline"
-              onClick={() => {
-                toast.info("Opening bulk upload...");
-                navigate("/bulk-client-upload");
-              }}
-              className="border-green-600 text-green-600 hover:bg-green-50"
-            >
-              <Upload className="mr-2 h-4 w-4" />
-              Bulk Upload
-            </Button>
+            {/* The bulk upload page is admin-only; others were bounced back */}
+            {isAdmin && (
+              <Button
+                variant="outline"
+                onClick={() => navigate("/bulk-client-upload")}
+                className="border-green-600 text-green-600 hover:bg-green-50"
+              >
+                <Upload className="mr-2 h-4 w-4" />
+                Bulk Upload
+              </Button>
+            )}
             
             <AddClientDialog onClientAdded={loadClients} />
           </div>
@@ -567,7 +567,7 @@ const Dashboard = () => {
                             <DropdownMenuContent align="end" className="w-48">
                               {client.isInvitation ? (
                                 <>
-                                  <DropdownMenuItem onClick={async () => { try { await supabase.functions.invoke("send-client-invitation", { body: { clientEmail: client.email, clientName: client.client_name, isResend: true } }); toast.success("Invitation resent successfully"); } catch { toast.error("Failed to resend invitation"); } }}>Resend invitation</DropdownMenuItem>
+                                  <DropdownMenuItem onClick={async () => { const { error } = await supabase.functions.invoke("send-client-invitation", { body: { clientEmail: client.email } }); if (error) { toast.error("Couldn't resend — send a new invitation from Client Invitations"); } else { toast.success("Invitation resent successfully"); } }}>Resend invitation</DropdownMenuItem>
                                   <DropdownMenuItem onClick={async () => { if (confirm(`Cancel invitation for ${client.client_name}?`)) { try { await supabase.from("client_invitations").update({ status: "cancelled" }).eq("id", client.id); toast.success("Invitation cancelled"); loadClients(); } catch { toast.error("Failed to cancel invitation"); } } }} className="text-destructive focus:text-destructive">Cancel invitation</DropdownMenuItem>
                                 </>
                               ) : (

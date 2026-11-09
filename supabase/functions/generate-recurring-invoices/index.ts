@@ -1,9 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.78.0';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { corsHeaders, isInternalRequest, jsonResponse } from "../_shared/security.ts";
 
 interface RecurringInvoice {
   id: string;
@@ -34,6 +31,12 @@ interface RecurringLineItem {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  // Scheduled job: only the scheduler (CRON_SECRET header) or another
+  // server function (service-role key) may run it.
+  if (!isInternalRequest(req)) {
+    return jsonResponse({ error: "Unauthorized" }, 401);
   }
 
   try {

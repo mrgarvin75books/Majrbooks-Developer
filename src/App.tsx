@@ -57,6 +57,9 @@ import BankReconciliation from "./pages/BankReconciliation";
 import SalesTaxSummary from "./pages/SalesTaxSummary";
 import InvoiceEditor from "./pages/InvoiceEditor";
 import ChartOfAccounts from "./pages/ChartOfAccounts";
+import ScheduleC from "./pages/ScheduleC";
+import AccountRegister from "./pages/AccountRegister";
+import BusinessHome from "./pages/BusinessHome";
 import ClientSubscriptions from "./pages/billing/ClientSubscriptions";
 import ProductRecommendations from "./pages/billing/ProductRecommendations";
 import DiscoverMore from "./pages/billing/DiscoverMore";
@@ -133,20 +136,25 @@ const App = () => (
             {/* ── Admin-only routes ── */}
             <Route element={<ClientRouteGuard requireAdmin />}>
               <Route path="/admin" element={<AdminDashboard />} />
-              <Route path="/team" element={<Team />} />
-              <Route path="/user-permissions" element={<UserPermissions />} />
               <Route path="/bulk-client-upload" element={<BulkClientUpload />} />
               <Route path="/bulk-client-numbers" element={<BulkClientNumbers />} />
               <Route path="/billing/client-subscriptions" element={<ClientSubscriptions />} />
               <Route path="/billing/product-recommendations" element={<ProductRecommendations />} />
               <Route path="/billing/discover-more" element={<DiscoverMore />} />
-              <Route path="/billing/firm-subscriptions" element={<FirmSubscriptions />} />
-              <Route path="/billing/billing-details" element={<BillingDetails />} />
               <Route path="/billing/revenue-share" element={<RevenueShare />} />
             </Route>
 
-            {/* ── Staff routes (user + admin, clients blocked) ── */}
+            {/* ── Account owners (and platform admins): manage their own team and plan */}
+            <Route element={<ClientRouteGuard requireOwner />}>
+              <Route path="/team" element={<Team />} />
+              <Route path="/user-permissions" element={<UserPermissions />} />
+              <Route path="/billing/firm-subscriptions" element={<FirmSubscriptions />} />
+              <Route path="/billing/billing-details" element={<BillingDetails />} />
+            </Route>
+
+            {/* ── Practice routes (owners, team members, admins; clients blocked) ── */}
             <Route element={<ClientRouteGuard requireStaff />}>
+              <Route path="/home" element={<BusinessHome />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/client/:id" element={<ClientDetails />} />
               <Route path="/client-invitations" element={<ClientInvitations />} />
@@ -156,6 +164,7 @@ const App = () => (
               <Route path="/invoice-templates" element={<InvoiceTemplates />} />
               <Route path="/invoice/:id?" element={<InvoiceEditor />} />
               <Route path="/tax-returns" element={<TaxReturns />} />
+              <Route path="/schedule-c" element={<ScheduleC />} />
               <Route path="/tax-majr-ai" element={<TaxMajrAiLogin />} />
               <Route path="/tax-majr-ai-dashboard" element={<TaxMajrAi />} />
               <Route path="/bookkeeping" element={<BookkeepingDashboard />} />
@@ -192,6 +201,7 @@ const App = () => (
               <Route path="/bank-reconciliation" element={<BankReconciliation />} />
               <Route path="/sales-tax-summary" element={<SalesTaxSummary />} />
               <Route path="/chart-of-accounts" element={<ChartOfAccounts />} />
+              <Route path="/accounts/:accountId/register" element={<AccountRegister />} />
               <Route path="/financial-dashboard" element={<FinancialDashboard />} />
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/resources" element={<Resources />} />

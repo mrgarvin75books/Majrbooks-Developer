@@ -1,21 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { Resend } from "https://esm.sh/resend@2.0.0";
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
-
-interface InviteRequest {
-  teamMemberId: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  role: string;
-  inviterName: string;
-  businessName: string;
-}
+import {
+  assertUuid,
+  corsHeaders,
+  errorResponse,
+  escapeHtml,
+  HttpError,
+  jsonResponse,
+  requireUser,
+  serviceClient,
+} from "../_shared/security.ts";
 
 serve(async (req) => {
   // Handle CORS preflight requests
@@ -24,22 +18,46 @@ serve(async (req) => {
   }
 
   try {
-    console.log("Processing team invite request...");
-
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const resendApiKey = Deno.env.get('RESEND_API_KEY');
-    
     if (!resendApiKey) {
       throw new Error("RESEND_API_KEY is not configured");
     }
-    
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // The caller must be signed in and must own the team seat being invited.
+    const caller = await requireUser(req);
+    const supabase = serviceClient();
     const resend = new Resend(resendApiKey);
 
-    const { teamMemberId, email, firstName, lastName, role, inviterName, businessName }: InviteRequest = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const teamMemberId = assertUuid(body?.teamMemberId, "teamMemberId");
 
-    console.log(`Sending invite to ${email} for role: ${role}`);
+    const { data: member, error: memberError } = await supabase
+      .from('team_members')
+      .select('id, owner_id, user_id, email, first_name, last_name, role')
+      .eq('id', teamMemberId)
+      .maybeSingle();
+
+    if (memberError) throw memberError;
+    if (!member || member.owner_id !== caller.id) {
+      throw new HttpError(404, "Team member not found");
+    }
+    if (member.user_id) {
+      throw new HttpError(409, "This team member has already accepted their invitation");
+    }
+
+    // Every value in the email comes from the database, never from the request body.
+    const { data: ownerProfile } = await supabase
+      .from('profiles')
+      .select('business_name, full_name')
+      .eq('id', caller.id)
+      .maybeSingle();
+
+    const email: string = member.email;
+    const role = escapeHtml(member.role);
+    const firstName = escapeHtml(member.first_name);
+    const lastName = escapeHtml(member.last_name);
+    const rawBusinessName = String(ownerProfile?.business_name || ownerProfile?.full_name || 'MAJR Books');
+    const businessName = escapeHtml(rawBusinessName);
 
     // Generate invite token
     const inviteToken = crypto.randomUUID();
@@ -54,7 +72,8 @@ serve(async (req) => {
         invite_token: inviteToken,
         invite_sent_at: new Date().toISOString()
       })
-      .eq('id', teamMemberId);
+      .eq('id', member.id)
+      .eq('owner_id', caller.id);
 
     if (updateError) {
       console.error("Error updating team member:", updateError);
@@ -140,7 +159,7 @@ serve(async (req) => {
     const { data: emailData, error: emailError } = await resend.emails.send({
       from: 'MAJRBooks <support@majrbooks.com>',
       to: [email],
-      subject: `Your MAJRBooks Access Has Been Activated - ${businessName}`,
+      subject: `Your MAJRBooks Access Has Been Activated - ${rawBusinessName.replace(/[\r\n]/g, ' ')}`,
       html: emailHtml,
     });
 
@@ -150,47 +169,22 @@ serve(async (req) => {
     }
 
     // Log the invite for audit purposes
-    const authHeader = req.headers.get('Authorization');
-    if (authHeader) {
-      const token = authHeader.replace('Bearer ', '');
-      const { data: { user } } = await supabase.auth.getUser(token);
-      
-      if (user) {
-        await supabase.from('audit_logs').insert({
-          owner_id: user.id,
-          user_id: user.id,
-          team_member_id: teamMemberId,
-          action: 'invite_sent',
-          entity_type: 'team_member',
-          entity_id: teamMemberId,
-          details: { email, role, firstName, lastName }
-        });
-      }
-    }
+    await supabase.from('audit_logs').insert({
+      owner_id: caller.id,
+      user_id: caller.id,
+      team_member_id: member.id,
+      action: 'invite_sent',
+      entity_type: 'team_member',
+      entity_id: member.id,
+      details: { email, role: member.role }
+    });
 
-    console.log("Invite sent successfully:", emailData);
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: 'Invitation sent successfully',
-        emailId: emailData?.id
-      }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200 
-      }
-    );
-
+    return jsonResponse({
+      success: true,
+      message: 'Invitation sent successfully',
+      emailId: emailData?.id
+    });
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error("Error in send-team-invite:", errorMessage);
-    return new Response(
-      JSON.stringify({ error: errorMessage }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500
-      }
-    );
+    return errorResponse(error);
   }
 });

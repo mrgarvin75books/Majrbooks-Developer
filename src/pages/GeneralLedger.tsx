@@ -108,6 +108,8 @@ const GeneralLedger = () => {
           )
         `)
         .eq("user_id", user.id)
+        // Drafts are not part of the ledger
+        .in("status", ["posted", "voided"])
         .gte("entry_date", format(startDate, "yyyy-MM-dd"))
         .lte("entry_date", format(endDate, "yyyy-MM-dd"))
         .order("entry_date", { ascending: true });

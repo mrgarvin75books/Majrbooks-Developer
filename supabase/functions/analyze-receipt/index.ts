@@ -1,10 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  assertUuid,
+  corsHeaders,
+  errorResponse,
+  getScopeOwnerId,
+  HttpError,
+  requireUser,
+  serviceClient,
+} from "../_shared/security.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+const MAX_RECEIPT_BYTES = 15 * 1024 * 1024;
 
 // Helper to convert ArrayBuffer to base64
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -40,41 +45,47 @@ serve(async (req) => {
   }
 
   try {
-    const { receiptId, imageUrl } = await req.json();
-
-    if (!receiptId || !imageUrl) {
-      return new Response(
-        JSON.stringify({ error: "Missing receiptId or imageUrl" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    const caller = await requireUser(req);
+    const body = await req.json().catch(() => ({}));
+    // `imageUrl` from older clients is intentionally ignored: the file is read
+    // from storage using the receipt's own file_path, never from a caller URL.
+    const receiptId = assertUuid(body?.receiptId, "receiptId");
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
       throw new Error("LOVABLE_API_KEY is not configured");
     }
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const supabase = serviceClient();
 
-    console.log("Analyzing receipt:", receiptId);
-    console.log("Image URL:", imageUrl);
+    const { data: receipt, error: receiptError } = await supabase
+      .from("receipts")
+      .select("id, user_id, file_path")
+      .eq("id", receiptId)
+      .maybeSingle();
+    if (receiptError) throw receiptError;
 
-    // Fetch the file and convert to base64 for proper handling
-    // This is required for PDFs and ensures consistent handling for all file types
-    const fileResponse = await fetch(imageUrl);
-    if (!fileResponse.ok) {
-      throw new Error(`Failed to fetch file: ${fileResponse.status}`);
+    const ownerId = await getScopeOwnerId(supabase, caller.id);
+    if (!receipt || (receipt.user_id !== caller.id && receipt.user_id !== ownerId)) {
+      throw new HttpError(404, "Receipt not found");
+    }
+    if (!receipt.file_path) {
+      throw new HttpError(400, "Receipt has no file attached");
     }
 
-    const contentType = fileResponse.headers.get('content-type') || '';
-    const mimeType = getMimeType(imageUrl, contentType);
-    const arrayBuffer = await fileResponse.arrayBuffer();
+    const { data: fileBlob, error: downloadError } = await supabase.storage
+      .from("receipts")
+      .download(receipt.file_path);
+    if (downloadError || !fileBlob) {
+      throw new Error("Failed to read receipt file from storage");
+    }
+    if (fileBlob.size > MAX_RECEIPT_BYTES) {
+      throw new HttpError(413, "Receipt file is too large to analyze (15 MB max)");
+    }
+
+    const mimeType = getMimeType(receipt.file_path, fileBlob.type);
+    const arrayBuffer = await fileBlob.arrayBuffer();
     const base64Data = arrayBufferToBase64(arrayBuffer);
-    
-    console.log("File MIME type:", mimeType);
-    console.log("File size:", arrayBuffer.byteLength, "bytes");
 
     // Build the image content based on file type
     // For PDFs and all files, use data URL format for reliable processing
@@ -285,10 +296,6 @@ Be precise with numbers. If you can't identify a field, use null.`
     );
 
   } catch (error) {
-    console.error("Error analyzing receipt:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error);
   }
 });

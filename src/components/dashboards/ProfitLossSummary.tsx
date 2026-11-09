@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProfitLossData } from '@/hooks/useDashboardData';
+import { formatMoneyCompact } from '@/lib/money';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie } from 'recharts';
 import { ArrowUp, ArrowDown, Minus, FileText, CheckCircle, Clock } from 'lucide-react';
 
@@ -169,7 +170,7 @@ export function ProfitLossSummary() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" horizontal={true} vertical={false} />
-                  <XAxis type="number" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} className="text-xs" />
+                  <XAxis type="number" tickFormatter={(v: number) => formatMoneyCompact(Math.round(v * 100))} className="text-xs" />
                   <YAxis type="category" dataKey="name" className="text-xs" width={100} />
                   <Tooltip 
                     formatter={(value: number) => formatCurrency(value)}

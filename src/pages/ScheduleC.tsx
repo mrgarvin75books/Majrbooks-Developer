@@ -1,10 +1,12 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
+import { useSearchParams } from "react-router-dom";
+import { detectColumns, findHeaderRow, parseLines, type Cell, type ParsedLine } from "@/lib/statementImport";
+import { categorize } from "@/lib/categorizeRules";
 import Layout from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -15,15 +17,21 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  ALL_CATEGORY_NAMES, computeSummary, normalizeTransactions,
+  type ScheduleCSummary, type ScheduleCTransaction, type TxType,
+} from "@/lib/scheduleC";
+import { formatMoney } from "@/lib/money";
 
-interface Transaction {
-  date: string;
-  description: string;
-  amount: number;
-  category: string;
-  type: "income" | "expense" | "personal" | "needs_review";
-  notes: string;
-}
+type Transaction = ScheduleCTransaction;
+
+const TX_TYPE_LABELS: Record<TxType, string> = {
+  income: "Income",
+  expense: "Expense",
+  transfer: "Transfer",
+  personal: "Personal",
+  needs_review: "Needs review",
+};
 
 interface FlaggedItem {
   date: string;
@@ -40,23 +48,49 @@ interface RecurringSub {
 }
 
 interface ScheduleCResult {
-  summary: {
-    total_income: number;
-    expense_totals: Record<string, number>;
-    total_expenses: number;
-    net_profit: number;
-  };
+  /** Always recomputed from `transactions` in exact cents. */
+  summary: ScheduleCSummary;
   transactions: Transaction[];
   flagged_items: FlaggedItem[];
   recurring_subscriptions: RecurringSub[];
+  statement_period?: { start: string; end: string } | null;
+  notes?: string;
 }
+
+/** Builds a result from statement lines or a saved report, recomputing every total. */
+function buildResult(raw: Record<string, unknown>): ScheduleCResult {
+  const transactions = normalizeTransactions(raw.transactions);
+  return {
+    transactions,
+    summary: computeSummary(transactions),
+    flagged_items: Array.isArray(raw.flagged_items) ? (raw.flagged_items as FlaggedItem[]) : [],
+    recurring_subscriptions: Array.isArray(raw.recurring_subscriptions) ? (raw.recurring_subscriptions as RecurringSub[]) : [],
+    statement_period: (raw.statement_period as ScheduleCResult["statement_period"]) ?? null,
+    notes: typeof raw.notes === "string" ? raw.notes : "",
+  };
+}
+
+const cents$ = (c: number) => formatMoney(c);
+const cents$p = (c: number) => formatMoney(c, { parentheses: true });
 
 interface UploadedFile {
   name: string;
   size: number;
-  content: string;
-  isPdf?: boolean;
-  pdfBase64?: string;
+  lines: ParsedLine[];
+}
+
+/** Reads every sheet and keeps the one with the most recognisable transactions. */
+function readStatementWorkbook(wb: XLSX.WorkBook): ParsedLine[] {
+  let best: ParsedLine[] = [];
+  for (const name of wb.SheetNames) {
+    const rows = XLSX.utils.sheet_to_json<Cell[]>(wb.Sheets[name], { header: 1, raw: true, defval: null, blankrows: false });
+    const h = findHeaderRow(rows);
+    const map = detectColumns(rows[h] ?? []);
+    if (map.date === null || (map.amount === null && map.debit === null && map.credit === null)) continue;
+    const { lines } = parseLines(rows, h, map);
+    if (lines.length > best.length) best = lines;
+  }
+  return best;
 }
 
 const formatCurrency = (n: number) =>
@@ -83,8 +117,6 @@ export default function ScheduleC() {
   const [clientName, setClientName] = useState("");
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [clients, setClients] = useState<{ id: string; client_name: string }[]>([]);
-  const [rawText, setRawText] = useState("");
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<ScheduleCResult | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -94,6 +126,7 @@ export default function ScheduleC() {
   const [savedReports, setSavedReports] = useState<any[]>([]);
   const [showSavedReports, setShowSavedReports] = useState(false);
   const [isLoadingReports, setIsLoadingReports] = useState(false);
+  const [taxYear, setTaxYear] = useState<number>(() => new Date().getFullYear() - (new Date().getMonth() < 4 ? 1 : 0));
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch clients
@@ -108,6 +141,47 @@ export default function ScheduleC() {
     };
     fetchClients();
   }, [user]);
+
+  // Opened from a client's page (?client=<id>&year=YYYY): build the P&L from that
+  // client's imported bank transactions.
+  const [searchParams] = useSearchParams();
+  const fromClient = searchParams.get("client");
+  const fromYear = Number(searchParams.get("year"));
+  useEffect(() => {
+    if (!user || !fromClient || !/^[0-9a-f-]{36}$/i.test(fromClient)) return;
+    const year = Number.isInteger(fromYear) && fromYear > 1990 ? fromYear : taxYear;
+    let cancelled = false;
+    (async () => {
+      const { data: c } = await supabase.from("clients").select("client_name").eq("id", fromClient).maybeSingle();
+      const rows: { txn_date: string; description: string; amount: number; type: string; category: string; notes: string }[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from("client_statement_transactions")
+          .select("txn_date, description, amount, type, category, notes")
+          .eq("client_id", fromClient)
+          .gte("txn_date", `${year}-01-01`).lte("txn_date", `${year}-12-31`)
+          .order("txn_date").order("id").range(from, from + 999);
+        if (error) {
+          if (!cancelled) toast({ title: "Couldn't load the client's transactions", description: error.message, variant: "destructive" });
+          return;
+        }
+        rows.push(...(data ?? []));
+        if (!data || data.length < 1000) break;
+      }
+      if (cancelled) return;
+      setSelectedClientId(fromClient);
+      setClientName(c?.client_name ?? "");
+      setTaxYear(year);
+      setSavedReportId(null);
+      setIsConfirmed(false);
+      setResult(buildResult({
+        transactions: rows.map((r) => ({ date: r.txn_date, description: r.description, amount: Number(r.amount), type: r.type, category: r.category, notes: r.notes })),
+        statement_period: rows.length ? { start: rows[0].txn_date, end: rows[rows.length - 1].txn_date } : null,
+        notes: `Built from ${rows.length} imported bank transaction${rows.length === 1 ? "" : "s"}. Change categories on the client's page.`,
+      }));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, fromClient, fromYear]);
 
   // Fetch saved reports
   const fetchSavedReports = useCallback(async () => {
@@ -132,12 +206,12 @@ export default function ScheduleC() {
     setSelectedClientId(report.client_id || "");
     setSavedReportId(report.id);
     setIsConfirmed(report.is_confirmed || false);
-    setResult({
-      summary: report.summary || { total_income: 0, expense_totals: {}, total_expenses: 0, net_profit: 0 },
-      transactions: report.transactions || [],
-      flagged_items: report.flagged_items || [],
-      recurring_subscriptions: report.recurring_subscriptions || [],
-    });
+    if (report.tax_year) setTaxYear(Number(report.tax_year));
+    setResult(buildResult({
+      transactions: report.transactions,
+      flagged_items: report.flagged_items,
+      recurring_subscriptions: report.recurring_subscriptions,
+    }));
     setShowSavedReports(false);
     toast({ title: "Report loaded", description: `Loaded report for ${report.client_name}.` });
   }, []);
@@ -167,7 +241,7 @@ export default function ScheduleC() {
         user_id: user.id,
         client_name: clientName.trim() || clients.find(c => c.id === selectedClientId)?.client_name || "Unknown",
         client_id: selectedClientId || null,
-        tax_year: new Date().getFullYear(),
+        tax_year: taxYear,
         summary: result.summary as any,
         transactions: result.transactions as any,
         flagged_items: result.flagged_items as any,
@@ -198,7 +272,110 @@ export default function ScheduleC() {
     } finally {
       setIsSaving(false);
     }
-  }, [result, user, clientName, selectedClientId, clients, isConfirmed, savedReportId]);
+  }, [result, user, clientName, selectedClientId, clients, isConfirmed, savedReportId, taxYear]);
+
+  /** Re-categorise one transaction; every total is recomputed from scratch. */
+  const updateTransaction = useCallback((index: number, patch: Partial<Transaction>) => {
+    setResult((prev) => {
+      if (!prev) return prev;
+      const transactions = prev.transactions.map((t, i) => {
+        if (i !== index) return t;
+        const next = { ...t, ...patch };
+        // Keep type and category consistent for the non-business buckets
+        if (patch.type === "transfer") next.category = "Transfer between accounts";
+        if (patch.type === "personal") next.category = "Owner draw or personal";
+        if (patch.type === "needs_review") next.category = "Needs review";
+        if (patch.category === "Transfer between accounts") next.type = "transfer";
+        if (patch.category === "Owner draw or personal") next.type = "personal";
+        if (patch.category === "Needs review") next.type = "needs_review";
+        if (patch.category === "Sales / gross receipts" || patch.category === "Other business income") next.type = "income";
+        return next;
+      });
+      return { ...prev, transactions, summary: computeSummary(transactions) };
+    });
+    setIsConfirmed(false);
+  }, []);
+
+  const exportExcel = useCallback(() => {
+    if (!result) return;
+    const s = result.summary;
+    const d = (c: number) => c / 100;
+    const wb = XLSX.utils.book_new();
+
+    const pnlRows: (string | number)[][] = [
+      [`Profit and Loss${clientName ? ` — ${clientName}` : ""}`],
+      [result.statement_period?.start ? `Period: ${result.statement_period.start} to ${result.statement_period.end}` : `Tax year ${taxYear}`],
+      [],
+      ["Income"],
+      ...s.pnl.income.map((r) => [`  ${r.category}`, d(r.amount)]),
+      ["Total income", d(s.pnl.totalIncome)],
+      ["Cost of goods sold", d(s.pnl.cogs)],
+      ["Gross profit", d(s.pnl.grossProfit)],
+      [],
+      ["Expenses"],
+      ...s.pnl.expenses.map((r) => [`  ${r.category}`, d(r.amount)]),
+      ["Total expenses", d(s.pnl.totalExpenses)],
+      [],
+      ["Net profit", d(s.pnl.netProfit)],
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(pnlRows), "Profit and Loss");
+
+    const scRows: (string | number)[][] = [
+      ["Schedule C (Form 1040) — prepared figures, review before filing"],
+      [],
+      ["Line", "Description", "Amount"],
+      ["1", "Gross receipts or sales", d(s.scheduleC.line1GrossReceipts)],
+      ["4", "Cost of goods sold", d(s.scheduleC.line4Cogs)],
+      ["5", "Gross profit", d(s.scheduleC.line5GrossProfit)],
+      ["6", "Other income", d(s.scheduleC.line6OtherIncome)],
+      ["7", "Gross income", d(s.scheduleC.line7GrossIncome)],
+      ...s.scheduleC.expenseLines.map((l) => [l.line, l.label, d(l.amount)]),
+      ["28", "Total expenses", d(s.scheduleC.line28TotalExpenses)],
+      ["31", "Net profit or (loss)", d(s.scheduleC.line31NetProfit)],
+    ];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(scRows), "Schedule C");
+
+    const txRows = [["Date", "Description", "Amount", "Type", "Category", "Notes"],
+      ...result.transactions.map((t) => [t.date, t.description, t.amount, TX_TYPE_LABELS[t.type], t.category, t.notes])];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(txRows), "Transactions");
+
+    const safeName = (clientName || "client").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+    XLSX.writeFile(wb, `schedule-c-pnl-${safeName}-${taxYear}.xlsx`);
+  }, [result, clientName, taxYear]);
+
+  const handlePrintPnl = useCallback(() => {
+    if (!result) return;
+    const p = result.summary.pnl;
+    const esc = (v: string) => v.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
+    const row = (label: string, c: number, cls = "") => `<tr class="${cls}"><td>${esc(label)}</td><td class="r">${cents$p(c)}</td></tr>`;
+    const w = window.open("", "_blank");
+    if (!w) return;
+    w.document.write(`<html><head><title>Profit and Loss - ${esc(clientName || "Client")}</title>
+      <style>
+        body{font-family:Arial,sans-serif;padding:40px;color:#111;max-width:720px;margin:auto}
+        h1{font-size:22px;margin:0} .sub{color:#666;font-size:13px;margin:4px 0 24px}
+        table{width:100%;border-collapse:collapse;font-size:13px} td{padding:5px 8px;border-bottom:1px solid #eee}
+        .r{text-align:right;font-variant-numeric:tabular-nums} .h td{font-weight:bold;background:#f5f5f5}
+        .t td{font-weight:bold;border-top:1px solid #333} .n td{font-weight:bold;font-size:15px;border-top:3px double #333}
+        .indent td:first-child{padding-left:24px} .foot{margin-top:32px;font-size:11px;color:#999}
+      </style></head><body>
+      <h1>Profit and Loss</h1>
+      <p class="sub">${esc(clientName ? `${clientName} · ` : "")}${result.statement_period?.start ? `${esc(result.statement_period.start)} to ${esc(result.statement_period.end)}` : `Tax year ${taxYear}`} · Prepared ${new Date().toLocaleDateString()}</p>
+      <table>
+        <tr class="h"><td colspan="2">Income</td></tr>
+        ${p.income.map((r) => row(r.category, r.amount, "indent")).join("")}
+        ${row("Total income", p.totalIncome, "t")}
+        ${p.cogs ? row("Cost of goods sold", p.cogs) + row("Gross profit", p.grossProfit, "t") : ""}
+        <tr class="h"><td colspan="2">Expenses</td></tr>
+        ${p.expenses.map((r) => row(r.category, r.amount, "indent")).join("")}
+        ${row("Total expenses", p.totalExpenses, "t")}
+        ${row("Net profit", p.netProfit, "n")}
+      </table>
+      <p class="foot">Prepared by MAJR Books from bank statement data. Transfers, personal items and items marked for review are excluded. Review before relying on these figures.</p>
+      </body></html>`);
+    w.document.close();
+    w.print();
+  }, [result, clientName, taxYear]);
   const handlePrintSummary = useCallback(() => {
     if (!result) return;
     const printWindow = window.open("", "_blank");
@@ -247,49 +424,22 @@ export default function ScheduleC() {
 
   const handlePrintScheduleC = useCallback(() => {
     if (!result) return;
-    const s = result.summary;
-    const exp = s.expense_totals;
+    const sc = result.summary.scheduleC;
+    const esc = (v: string) => v.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]!));
+    const amt = (c: number) => (c ? cents$p(c) : "");
+    const lineRow = (line: string, label: string, c: number, total = false) =>
+      `<div class="line-row"><span class="line-num">${line}</span><span class="line-label">${esc(label)}</span><span class="line-amount${total ? " total" : ""}">${amt(c)}</span></div>`;
+    const otherDetail = sc.otherExpenseDetail.length
+      ? `<div class="section-title">Part V — Other Expenses (line 27a detail)</div>
+         <table class="other-table">${sc.otherExpenseDetail
+           .map((r) => `<tr><td>${esc(r.category)}</td><td style="text-align:right;width:130px">${cents$p(r.amount)}</td></tr>`)
+           .join("")}</table>`
+      : "";
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
-    const lineItems = [
-      { line: "8", label: "Advertising", keys: ["Advertising"] },
-      { line: "9", label: "Car and truck expenses", keys: ["Car & Truck Expenses", "Car and Truck"] },
-      { line: "10", label: "Commissions and fees", keys: ["Commissions & Fees", "Commissions"] },
-      { line: "11", label: "Contract labor", keys: ["Contract Labor"] },
-      { line: "13", label: "Depreciation and section 179", keys: ["Depreciation"] },
-      { line: "14", label: "Employee benefit programs", keys: ["Employee Benefits"] },
-      { line: "15", label: "Insurance (other than health)", keys: ["Insurance"] },
-      { line: "16a", label: "Mortgage interest paid to banks", keys: ["Mortgage Interest"] },
-      { line: "17", label: "Legal and professional services", keys: ["Legal & Professional Services", "Legal"] },
-      { line: "18", label: "Office expense", keys: ["Office Expenses", "Office Supplies"] },
-      { line: "20a", label: "Rent or lease — Vehicles, machinery, equipment", keys: ["Rent - Equipment"] },
-      { line: "20b", label: "Rent or lease — Other business property", keys: ["Rent - Business Property", "Rent"] },
-      { line: "21", label: "Repairs and maintenance", keys: ["Repairs & Maintenance", "Repairs"] },
-      { line: "22", label: "Supplies (not in Part III)", keys: ["Supplies"] },
-      { line: "23", label: "Taxes and licenses", keys: ["Taxes & Licenses"] },
-      { line: "24a", label: "Travel", keys: ["Travel"] },
-      { line: "24b", label: "Deductible meals", keys: ["Meals", "Meals & Entertainment"] },
-      { line: "25", label: "Utilities", keys: ["Utilities"] },
-      { line: "26", label: "Wages", keys: ["Wages"] },
-      { line: "27a", label: "Other expenses (from line 48)", keys: ["Other Expenses", "Software & Subscriptions", "Education & Training", "Bank Fees", "Telephone", "Internet", "Postage & Shipping", "Tools"] },
-    ];
-
-    const getAmount = (keys: string[]) => {
-      let total = 0;
-      for (const k of keys) {
-        for (const [cat, amt] of Object.entries(exp)) {
-          if (cat.toLowerCase().includes(k.toLowerCase())) total += amt;
-        }
-      }
-      return total;
-    };
-
-    const otherKeys = ["Software & Subscriptions", "Education & Training", "Bank Fees", "Telephone", "Internet", "Postage & Shipping", "Tools", "Other Expenses"];
-    const otherDetails = Object.entries(exp).filter(([cat]) => otherKeys.some(k => cat.toLowerCase().includes(k.toLowerCase())));
-
     printWindow.document.write(`
-      <html><head><title>Schedule C (Form 1040) - ${clientName || "Taxpayer"}</title>
+      <html><head><title>Schedule C (Form 1040) - ${esc(clientName || "Taxpayer")}</title>
       <style>
         body { font-family: 'Courier New', monospace; padding: 30px; color: #000; font-size: 12px; }
         h1 { font-size: 16px; text-align: center; margin-bottom: 2px; font-family: Arial, sans-serif; }
@@ -300,7 +450,7 @@ export default function ScheduleC() {
         .line-row { display: flex; align-items: baseline; padding: 3px 0; border-bottom: 1px dotted #ccc; }
         .line-num { width: 40px; font-weight: bold; flex-shrink: 0; }
         .line-label { flex: 1; }
-        .line-amount { width: 120px; text-align: right; font-weight: bold; border-bottom: 1px solid #000; padding: 0 4px; }
+        .line-amount { width: 130px; text-align: right; font-weight: bold; border-bottom: 1px solid #000; padding: 0 4px; }
         .line-amount.total { border-bottom: 3px double #000; }
         .info-row { display: flex; gap: 20px; margin-bottom: 6px; }
         .info-label { font-size: 10px; color: #666; }
@@ -308,126 +458,92 @@ export default function ScheduleC() {
         .other-table { width: 100%; border-collapse: collapse; margin: 8px 0; }
         .other-table td { border: 1px solid #ccc; padding: 3px 6px; }
         .confirmed-stamp { position: fixed; top: 40%; right: 10%; transform: rotate(-15deg); font-size: 48px; color: rgba(34,197,94,0.2); font-weight: bold; font-family: Arial; border: 4px solid rgba(34,197,94,0.2); padding: 10px 20px; border-radius: 12px; pointer-events: none; }
-        .footer { margin-top: 30px; font-size: 10px; color: #999; text-align: center; }
+        .footer { margin-top: 30px; font-size: 10px; color: #777; text-align: center; }
         @media print { body { padding: 15px; } }
       </style></head><body>
-      ${isConfirmed ? '<div class="confirmed-stamp">CLIENT CONFIRMED</div>' : ''}
+      ${isConfirmed ? '<div class="confirmed-stamp">CLIENT CONFIRMED</div>' : ""}
       <div class="form-header">
         <h1>SCHEDULE C (Form 1040)</h1>
         <h2>Profit or Loss From Business (Sole Proprietorship)</h2>
-        <p class="dept">Department of the Treasury — Internal Revenue Service</p>
+        <p class="dept">Preparation worksheet — not an official IRS form</p>
       </div>
-      <div class="info-row"><span class="info-label">Name of proprietor:</span> <span class="info-field">${clientName || ''}</span> <span class="info-label" style="margin-left:20px">Tax Year:</span> <span class="info-field">${new Date().getFullYear()}</span></div>
-      <div class="info-row"><span class="info-label">SSN:</span> <span class="info-field">___-__-____</span> <span class="info-label" style="margin-left:20px">EIN:</span> <span class="info-field">__-_______</span></div>
+      <div class="info-row"><span class="info-label">Name of proprietor:</span> <span class="info-field">${esc(clientName || "")}</span> <span class="info-label" style="margin-left:20px">Tax year:</span> <span class="info-field">${taxYear}</span></div>
       <div class="info-row"><span class="info-label">Principal business:</span> <span class="info-field"></span> <span class="info-label" style="margin-left:20px">Business code:</span> <span class="info-field"></span></div>
-      <div class="info-row"><span class="info-label">Business name:</span> <span class="info-field"></span> <span class="info-label" style="margin-left:20px">Accounting method: ☐ Cash ☐ Accrual ☐ Other</span></div>
 
       <div class="section-title">Part I — Income</div>
-      <div class="line-row"><span class="line-num">1</span><span class="line-label">Gross receipts or sales</span><span class="line-amount">${formatCurrency(s.total_income)}</span></div>
-      <div class="line-row"><span class="line-num">2</span><span class="line-label">Returns and allowances</span><span class="line-amount"></span></div>
-      <div class="line-row"><span class="line-num">3</span><span class="line-label">Subtract line 2 from line 1</span><span class="line-amount">${formatCurrency(s.total_income)}</span></div>
-      <div class="line-row"><span class="line-num">4</span><span class="line-label">Cost of goods sold (from line 42)</span><span class="line-amount"></span></div>
-      <div class="line-row"><span class="line-num">5</span><span class="line-label">Gross profit</span><span class="line-amount">${formatCurrency(s.total_income)}</span></div>
-      <div class="line-row"><span class="line-num">7</span><span class="line-label">Gross income</span><span class="line-amount total">${formatCurrency(s.total_income)}</span></div>
+      ${lineRow("1", "Gross receipts or sales", sc.line1GrossReceipts)}
+      ${lineRow("2", "Returns and allowances", 0)}
+      ${lineRow("3", "Subtract line 2 from line 1", sc.line1GrossReceipts)}
+      ${lineRow("4", "Cost of goods sold", sc.line4Cogs)}
+      ${lineRow("5", "Gross profit", sc.line5GrossProfit)}
+      ${lineRow("6", "Other income", sc.line6OtherIncome)}
+      ${lineRow("7", "Gross income", sc.line7GrossIncome, true)}
 
       <div class="section-title">Part II — Expenses</div>
-      ${lineItems.map(item => {
-        const amt = getAmount(item.keys);
-        return `<div class="line-row"><span class="line-num">${item.line}</span><span class="line-label">${item.label}</span><span class="line-amount">${amt > 0 ? formatCurrency(amt) : ''}</span></div>`;
-      }).join("")}
-      <div class="line-row"><span class="line-num">28</span><span class="line-label"><strong>Total expenses</strong></span><span class="line-amount total">${formatCurrency(s.total_expenses)}</span></div>
-      <div class="line-row"><span class="line-num">29</span><span class="line-label">Tentative profit or (loss)</span><span class="line-amount">${formatCurrency(s.net_profit)}</span></div>
-      <div class="line-row"><span class="line-num">30</span><span class="line-label">Expenses for business use of your home</span><span class="line-amount"></span></div>
-      <div class="line-row"><span class="line-num">31</span><span class="line-label"><strong>Net profit or (loss)</strong></span><span class="line-amount total">${formatCurrency(s.net_profit)}</span></div>
+      ${sc.expenseLines.map((l) => lineRow(l.line, l.label, l.amount)).join("")}
+      ${lineRow("28", "Total expenses", sc.line28TotalExpenses, true)}
+      ${lineRow("29", "Tentative profit or (loss)", sc.line7GrossIncome - sc.line28TotalExpenses)}
+      ${lineRow("30", "Expenses for business use of your home", 0)}
+      ${lineRow("31", "Net profit or (loss)", sc.line31NetProfit, true)}
 
-      ${otherDetails.length > 0 ? `
-        <div class="section-title">Part V — Other Expenses (Line 27a detail)</div>
-        <table class="other-table">
-          ${otherDetails.map(([cat, amt]) => `<tr><td>${cat}</td><td style="text-align:right;width:120px">${formatCurrency(amt)}</td></tr>`).join("")}
-        </table>
-      ` : ''}
-      <p class="footer">Pre-filled by MAJR Books • ${new Date().toLocaleDateString()} • For reference only — verify before filing.</p>
+      ${otherDetail}
+      <p class="footer">Prepared by MAJR Books from bank statements · ${new Date().toLocaleDateString()}<br/>
+      Meals are shown at 50%. Transfers, personal items and items marked "needs review" are excluded.<br/>
+      Tax mappings are a starting point and must be reviewed by a qualified professional before filing.</p>
       </body></html>
     `);
     printWindow.document.close();
     printWindow.print();
-  }, [result, clientName, isConfirmed]);
+  }, [result, clientName, isConfirmed, taxYear]);
 
   const processFile = useCallback(async (file: globalThis.File): Promise<UploadedFile | null> => {
-    const maxSize = 20 * 1024 * 1024;
-    if (file.size > maxSize) {
-      toast({ title: "File too large", description: `${file.name} exceeds 20MB limit.`, variant: "destructive" });
+    if (file.size > 15 * 1024 * 1024) {
+      toast({ title: "File too large", description: `${file.name} is over the 15 MB limit. Split the statement into smaller files.`, variant: "destructive" });
       return null;
     }
-
-    let content = "";
-    let isPdf = false;
-    let pdfBase64 = "";
-
-    if (file.type === "text/csv" || file.name.endsWith(".csv")) {
-      content = await file.text();
-    } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-      // Convert PDF to full base64 for AI vision processing
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      pdfBase64 = btoa(binary);
-      isPdf = true;
-      content = `[PDF file: ${file.name} - will be processed via AI vision]`;
-    } else if (
-      file.name.endsWith(".xlsx") || file.name.endsWith(".xls") ||
-      file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    ) {
-      // Parse Excel files using xlsx library
-      try {
-        const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(buffer, { type: "array" });
-        const allSheets: string[] = [];
-        for (const sheetName of workbook.SheetNames) {
-          const sheet = workbook.Sheets[sheetName];
-          const csv = XLSX.utils.sheet_to_csv(sheet);
-          allSheets.push(`--- Sheet: ${sheetName} ---\n${csv}`);
-        }
-        content = allSheets.join("\n\n");
-      } catch {
-        content = await file.text();
-        toast({ title: "Note", description: `${file.name}: Could not parse Excel format. For best results, export as CSV.` });
-      }
-    } else {
-      content = await file.text();
+    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) {
+      toast({ title: "Excel or CSV only", description: `${file.name}: download the statement from the bank as Excel (.xlsx) or CSV.`, variant: "destructive" });
+      return null;
     }
-
-    return { name: file.name, size: file.size, content, isPdf, pdfBase64 };
+    let lines: ParsedLine[];
+    try {
+      lines = readStatementWorkbook(XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true, raw: false }));
+    } catch {
+      toast({ title: "Couldn't open the file", description: `${file.name} isn't a readable Excel or CSV file.`, variant: "destructive" });
+      return null;
+    }
+    if (!lines.length) {
+      toast({
+        title: "No transactions found",
+        description: `${file.name}: couldn't find Date and Amount (or Debit/Credit) columns. Check the file has a header row with those column names.`,
+        variant: "destructive",
+      });
+      return null;
+    }
+    return { name: file.name, size: file.size, lines };
   }, []);
 
   const addFiles = useCallback(async (files: FileList | globalThis.File[]) => {
-    const fileArray = Array.from(files);
     const processed: UploadedFile[] = [];
-    for (const f of fileArray) {
-      const result = await processFile(f);
-      if (result) processed.push(result);
+    const isSame = (a: { name: string; size: number }, b: { name: string; size: number }) => a.name === b.name && a.size === b.size;
+    for (const f of Array.from(files)) {
+      // The same statement added twice would count every transaction twice.
+      if (uploadedFiles.some((u) => isSame(u, f)) || processed.some((u) => isSame(u, f))) {
+        toast({ title: "Already added", description: `${f.name} is already in the list, so it was skipped.` });
+        continue;
+      }
+      const r = await processFile(f);
+      if (r) processed.push(r);
     }
     if (processed.length > 0) {
-      setUploadedFiles(prev => [...prev, ...processed]);
-      const combined = [...uploadedFiles, ...processed].map(f => f.content).join("\n\n---NEW FILE---\n\n");
-      setRawText(combined);
-      toast({ title: "Files loaded", description: `${processed.length} file(s) ready for analysis.` });
+      setUploadedFiles((prev) => [...prev, ...processed]);
+      const n = processed.reduce((s, f) => s + f.lines.length, 0);
+      toast({ title: "Files loaded", description: `${n} transactions found in ${processed.length} file(s).` });
     }
-  }, [uploadedFiles, processFile]);
+  }, [processFile, uploadedFiles]);
 
   const removeFile = useCallback((index: number) => {
-    setUploadedFiles(prev => {
-      const updated = prev.filter((_, i) => i !== index);
-      if (updated.length > 0) {
-        setRawText(updated.map(f => f.content).join("\n\n---NEW FILE---\n\n"));
-      } else {
-        setRawText("");
-      }
-      return updated;
-    });
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -453,59 +569,36 @@ export default function ScheduleC() {
     const files = e.dataTransfer.files;
     if (files.length > 0) await addFiles(files);
   }, [addFiles]);
-  const analyze = useCallback(async () => {
-    const hasTextContent = rawText.trim() && !rawText.trim().startsWith("[PDF file:");
-    const hasPdfFiles = uploadedFiles.some(f => f.isPdf && f.pdfBase64);
-    
-    if (!hasTextContent && !hasPdfFiles) {
-      toast({ title: "No data", description: "Please upload a file or paste transaction data.", variant: "destructive" });
+
+  /** Sorts every transaction with the built-in rules and builds the P&L / Schedule C. */
+  const buildReport = useCallback(() => {
+    const all = uploadedFiles.flatMap((f) => f.lines).sort((a, b) => a.date.localeCompare(b.date));
+    if (!all.length) {
+      toast({ title: "No data", description: "Upload an Excel or CSV bank statement first.", variant: "destructive" });
       return;
     }
-    setIsAnalyzing(true);
     setIsConfirmed(false);
     setSavedReportId(null);
-    try {
-      // Collect text content (non-PDF)
-      const textParts = uploadedFiles
-        .filter(f => !f.isPdf)
-        .map(f => f.content);
-      
-      // If user typed in the textarea and no files uploaded, use that
-      if (uploadedFiles.length === 0 && rawText.trim()) {
-        textParts.push(rawText);
-      }
-
-      // Collect PDF base64 data
-      const pdfFiles = uploadedFiles
-        .filter(f => f.isPdf && f.pdfBase64)
-        .map(f => ({ name: f.name, base64: f.pdfBase64! }));
-
-      const { data, error } = await supabase.functions.invoke("schedule-c-analyze", {
-        body: { 
-          transactions_text: textParts.join("\n\n---NEW FILE---\n\n"), 
-          client_name: clientName,
-          pdf_files: pdfFiles,
-        },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      setResult(data as ScheduleCResult);
-      toast({ title: "Analysis complete", description: "Schedule C categories have been assigned." });
-    } catch (err: any) {
-      toast({ title: "Analysis failed", description: err.message || "Unknown error", variant: "destructive" });
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }, [rawText, clientName, uploadedFiles]);
+    const built = buildResult({
+      transactions: all.map((l) => ({ date: l.date, description: l.description, amount: l.cents / 100, ...categorize(l.description, l.direction) })),
+      statement_period: { start: all[0].date, end: all[all.length - 1].date },
+      notes: "",
+    });
+    setResult(built);
+    const endYear = Number(all[all.length - 1].date.slice(0, 4));
+    if (endYear > 1990 && endYear < 2100) setTaxYear(endYear);
+    const review = built.summary.excluded.needsReviewCount;
+    toast({ title: "Done", description: `${all.length} transactions sorted${review ? ` · ${review} need your review` : ""}.` });
+  }, [uploadedFiles]);
 
   return (
     <Layout>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Schedule C Preparation</h1>
+            <h1 className="text-3xl font-bold">Schedule C &amp; P&amp;L from Bank Statements</h1>
             <p className="text-muted-foreground mt-1">
-              Upload bank statements to auto-categorize transactions for IRS Schedule C
+              Upload Excel or CSV bank statements; MAJR Books sorts every transaction and builds the Profit &amp; Loss and Schedule C
             </p>
           </div>
           <Button
@@ -648,7 +741,7 @@ export default function ScheduleC() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,.txt,.pdf,.xlsx,.xls"
+                accept=".csv,.xlsx,.xls"
                 multiple
                 onChange={handleFileUpload}
                 className="hidden"
@@ -658,7 +751,7 @@ export default function ScheduleC() {
                 Drag & drop files here, or click to browse
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                Supports CSV, TXT, PDF, XLSX • Multiple files allowed • Max 20MB each
+                Bank statements as Excel (.xlsx, .xls) or CSV • Max 15 MB each
               </p>
             </div>
 
@@ -688,32 +781,9 @@ export default function ScheduleC() {
               </div>
             )}
 
-            <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Or paste transaction data directly
-              </label>
-              <Textarea
-                rows={6}
-                placeholder={"Date, Description, Amount\n01/15/2025, AMAZON PURCHASE, -49.99\n01/16/2025, CLIENT PAYMENT DEPOSIT, 2500.00\n..."}
-                value={rawText}
-                onChange={(e) => {
-                  setRawText(e.target.value);
-                  if (uploadedFiles.length > 0) setUploadedFiles([]);
-                }}
-              />
-            </div>
-            <Button onClick={analyze} disabled={isAnalyzing} className="w-full md:w-auto">
-              {isAnalyzing ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Analyzing...
-                </>
-              ) : (
-                <>
-                  <ClipboardList className="h-4 w-4 mr-2" />
-                  Analyze & Categorize
-                </>
-              )}
+            <Button onClick={buildReport} disabled={uploadedFiles.length === 0} className="w-full md:w-auto">
+              <ClipboardList className="h-4 w-4 mr-2" />
+              Build P&amp;L and Schedule C
             </Button>
           </CardContent>
         </Card>
@@ -723,8 +793,10 @@ export default function ScheduleC() {
           <Tabs defaultValue="summary" className="space-y-4">
             {/* Action Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <TabsList>
+              <TabsList className="flex-wrap h-auto">
                 <TabsTrigger value="summary">Summary</TabsTrigger>
+                <TabsTrigger value="pnl">Profit &amp; Loss</TabsTrigger>
+                <TabsTrigger value="schedule-c">Schedule C</TabsTrigger>
                 <TabsTrigger value="transactions">
                   Transactions ({result.transactions.length})
                 </TabsTrigger>
@@ -735,7 +807,23 @@ export default function ScheduleC() {
                   Recurring ({result.recurring_subscriptions.length})
                 </TabsTrigger>
               </TabsList>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <Select value={String(taxYear)} onValueChange={(v) => setTaxYear(Number(v))}>
+                  <SelectTrigger className="w-[120px]" aria-label="Tax year"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Array.from({ length: 6 }, (_, i) => new Date().getFullYear() - i).map((y) => (
+                      <SelectItem key={y} value={String(y)}>Tax year {y}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" onClick={exportExcel} className="gap-2">
+                  <FileText className="h-4 w-4" />
+                  Export Excel
+                </Button>
+                <Button variant="outline" onClick={handlePrintPnl} className="gap-2">
+                  <Printer className="h-4 w-4" />
+                  Print P&amp;L
+                </Button>
                 {!isConfirmed ? (
                   <Button
                     variant="outline"
@@ -768,6 +856,137 @@ export default function ScheduleC() {
                 </Button>
               </div>
             </div>
+
+            {(result.summary.excluded.needsReviewCount > 0 || result.notes) && (
+              <Card className="border-yellow-500/50 bg-yellow-50/50 dark:bg-yellow-950/20">
+                <CardContent className="pt-6 space-y-1 text-sm">
+                  {result.summary.excluded.needsReviewCount > 0 && (
+                    <p className="flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5 shrink-0" />
+                      <span>
+                        <strong>{result.summary.excluded.needsReviewCount} transaction{result.summary.excluded.needsReviewCount === 1 ? "" : "s"} ({cents$(result.summary.excluded.needsReview)})</strong>{" "}
+                        couldn't be classified and are left out of the totals. Open the Transactions tab and choose a category for each.
+                      </span>
+                    </p>
+                  )}
+                  {result.notes && <p className="text-muted-foreground">{result.notes}</p>}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Profit and loss */}
+            <TabsContent value="pnl">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Profit and Loss</CardTitle>
+                  <CardDescription>
+                    {result.statement_period?.start
+                      ? `${result.statement_period.start} to ${result.statement_period.end}`
+                      : `Tax year ${taxYear}`}
+                    {" · "}Transfers ({cents$(result.summary.excluded.transfers)}) and personal items ({cents$(result.summary.excluded.personal)}) are excluded.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableBody>
+                      <TableRow className="bg-muted/50 font-semibold"><TableCell colSpan={2}>Income</TableCell></TableRow>
+                      {result.summary.pnl.income.map((r) => (
+                        <TableRow key={`i-${r.category}`}>
+                          <TableCell className="pl-8">{r.category}</TableCell>
+                          <TableCell className="text-right font-mono">{cents$p(r.amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="font-semibold">
+                        <TableCell>Total income</TableCell>
+                        <TableCell className="text-right font-mono">{cents$p(result.summary.pnl.totalIncome)}</TableCell>
+                      </TableRow>
+                      {result.summary.pnl.cogs !== 0 && (
+                        <>
+                          <TableRow>
+                            <TableCell>Cost of goods sold</TableCell>
+                            <TableCell className="text-right font-mono">{cents$p(result.summary.pnl.cogs)}</TableCell>
+                          </TableRow>
+                          <TableRow className="font-semibold">
+                            <TableCell>Gross profit</TableCell>
+                            <TableCell className="text-right font-mono">{cents$p(result.summary.pnl.grossProfit)}</TableCell>
+                          </TableRow>
+                        </>
+                      )}
+                      <TableRow className="bg-muted/50 font-semibold"><TableCell colSpan={2}>Expenses</TableCell></TableRow>
+                      {result.summary.pnl.expenses.map((r) => (
+                        <TableRow key={`e-${r.category}`}>
+                          <TableCell className="pl-8">{r.category}</TableCell>
+                          <TableCell className="text-right font-mono">{cents$p(r.amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="font-semibold">
+                        <TableCell>Total expenses</TableCell>
+                        <TableCell className="text-right font-mono">{cents$p(result.summary.pnl.totalExpenses)}</TableCell>
+                      </TableRow>
+                      <TableRow className="font-bold text-base border-t-2">
+                        <TableCell>Net profit</TableCell>
+                        <TableCell className="text-right font-mono">{cents$p(result.summary.pnl.netProfit)}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Schedule C lines */}
+            <TabsContent value="schedule-c">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Schedule C (Form 1040), tax year {taxYear}</CardTitle>
+                  <CardDescription>
+                    Meals are counted at 50% here (full amount on the P&amp;L). Tax mappings are a starting point and must be reviewed by a qualified professional before filing.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-16">Line</TableHead>
+                        <TableHead>Description</TableHead>
+                        <TableHead className="text-right">Amount</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {[
+                        ["1", "Gross receipts or sales", result.summary.scheduleC.line1GrossReceipts],
+                        ["4", "Cost of goods sold", result.summary.scheduleC.line4Cogs],
+                        ["5", "Gross profit", result.summary.scheduleC.line5GrossProfit],
+                        ["6", "Other income", result.summary.scheduleC.line6OtherIncome],
+                        ["7", "Gross income", result.summary.scheduleC.line7GrossIncome],
+                      ].map(([line, label, amount]) => (
+                        <TableRow key={line as string} className={line === "7" ? "font-semibold" : undefined}>
+                          <TableCell className="font-mono">{line}</TableCell>
+                          <TableCell>{label}</TableCell>
+                          <TableCell className="text-right font-mono">{cents$p(amount as number)}</TableCell>
+                        </TableRow>
+                      ))}
+                      {result.summary.scheduleC.expenseLines.map((l) => (
+                        <TableRow key={`l-${l.line}`}>
+                          <TableCell className="font-mono">{l.line}</TableCell>
+                          <TableCell>{l.label}</TableCell>
+                          <TableCell className="text-right font-mono">{cents$p(l.amount)}</TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="font-semibold">
+                        <TableCell className="font-mono">28</TableCell>
+                        <TableCell>Total expenses</TableCell>
+                        <TableCell className="text-right font-mono">{cents$p(result.summary.scheduleC.line28TotalExpenses)}</TableCell>
+                      </TableRow>
+                      <TableRow className="font-bold border-t-2">
+                        <TableCell className="font-mono">31</TableCell>
+                        <TableCell>Net profit or (loss)</TableCell>
+                        <TableCell className="text-right font-mono">{cents$p(result.summary.scheduleC.line31NetProfit)}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
 
             {/* Summary Tab */}
             <TabsContent value="summary" className="space-y-4">
@@ -872,11 +1091,29 @@ export default function ScheduleC() {
                             <TableCell className="text-right font-mono whitespace-nowrap">
                               {formatCurrency(tx.amount)}
                             </TableCell>
-                            <TableCell>{tx.category}</TableCell>
-                            <TableCell>
-                              <Badge variant={typeBadgeVariant(tx.type)}>
-                                {tx.type === "needs_review" ? "Needs Review" : tx.type}
-                              </Badge>
+                            <TableCell className="min-w-[220px]">
+                              <Select value={tx.category} onValueChange={(v) => updateTransaction(i, { category: v })}>
+                                <SelectTrigger className="h-8 text-xs" aria-label={`Category for ${tx.description}`}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {(ALL_CATEGORY_NAMES.includes(tx.category) ? ALL_CATEGORY_NAMES : [tx.category, ...ALL_CATEGORY_NAMES]).map((c) => (
+                                    <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </TableCell>
+                            <TableCell className="min-w-[140px]">
+                              <Select value={tx.type} onValueChange={(v) => updateTransaction(i, { type: v as TxType })}>
+                                <SelectTrigger className="h-8 text-xs" aria-label={`Type for ${tx.description}`}>
+                                  <Badge variant={typeBadgeVariant(tx.type)}>{TX_TYPE_LABELS[tx.type]}</Badge>
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {(Object.keys(TX_TYPE_LABELS) as TxType[]).map((t) => (
+                                    <SelectItem key={t} value={t} className="text-xs">{TX_TYPE_LABELS[t]}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
                             </TableCell>
                             <TableCell className="max-w-[150px] truncate text-muted-foreground text-sm">
                               {tx.notes}

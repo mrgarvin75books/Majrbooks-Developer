@@ -1,10 +1,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+import {
+  assertUuid,
+  corsHeaders,
+  errorResponse,
+  getScopeOwnerId,
+  HttpError,
+  requireUser,
+  serviceClient,
+} from "../_shared/security.ts";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -12,37 +15,36 @@ serve(async (req) => {
   }
 
   try {
-    const { paymentId, invoiceId, userId } = await req.json();
+    const caller = await requireUser(req);
+    const body = await req.json().catch(() => ({}));
+    const paymentId = assertUuid(body?.paymentId, "paymentId");
 
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = serviceClient();
+    const ownerId = await getScopeOwnerId(supabase, caller.id);
 
-    console.log("Triggering payment workflow for payment:", paymentId);
-
-    // Get payment details
+    // Get payment details; the caller must own it.
     const { data: payment, error: paymentError } = await supabase
       .from("invoice_payments")
       .select("*")
       .eq("id", paymentId)
-      .single();
+      .maybeSingle();
 
-    if (paymentError || !payment) {
-      console.error("Error fetching payment:", paymentError);
-      throw new Error("Payment not found");
+    if (paymentError) throw paymentError;
+    if (!payment || (payment.user_id !== caller.id && payment.user_id !== ownerId)) {
+      throw new HttpError(404, "Payment not found");
     }
 
-    // Get invoice details
+    // The invoice and workflow owner come from the payment, never from the request.
     const { data: invoice, error: invoiceError } = await supabase
       .from("invoices")
       .select("*")
-      .eq("id", invoiceId)
-      .single();
+      .eq("id", payment.invoice_id)
+      .eq("user_id", payment.user_id)
+      .maybeSingle();
 
-    if (invoiceError || !invoice) {
-      console.error("Error fetching invoice:", invoiceError);
-      throw new Error("Invoice not found");
-    }
+    if (invoiceError) throw invoiceError;
+    if (!invoice) throw new HttpError(404, "Invoice not found");
+    const userId = payment.user_id;
 
     // Get active payment_received workflows for this user
     const { data: workflows, error: workflowsError } = await supabase
@@ -134,13 +136,6 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Error in trigger-payment-workflow:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : String(error) }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return errorResponse(error);
   }
 });

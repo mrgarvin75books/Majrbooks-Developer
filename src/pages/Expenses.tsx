@@ -172,21 +172,22 @@ const Expenses = () => {
   };
 
   const fetchBills = async () => {
-    // Using invoices table for bills (payables)
+    // Vendor bills (accounts payable) live in `bills`. They previously used
+    // the customer `invoices` table, which booked every bill as revenue.
     const { data, error } = await supabase
-      .from("invoices")
+      .from("bills")
       .select("*")
       .eq("user_id", user?.id)
       .order("due_date", { ascending: true });
-    
+
     if (!error && data) {
-      setBills(data.map(i => ({
-        id: i.id,
-        vendor: i.client_name,
-        amount: i.amount,
-        due_date: i.due_date,
-        status: i.status,
-        description: i.notes || ""
+      setBills(data.map(b => ({
+        id: b.id,
+        vendor: b.vendor_name,
+        amount: Number(b.amount),
+        due_date: b.due_date,
+        status: b.status,
+        description: b.notes || ""
       })));
     }
   };
@@ -292,14 +293,19 @@ const Expenses = () => {
       return;
     }
 
-    const { error } = await supabase.from("invoices").insert({
+    const amount = Number(billForm.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Please enter an amount greater than zero");
+      return;
+    }
+
+    const { error } = await supabase.from("bills").insert({
       user_id: user?.id,
-      client_name: billForm.vendor,
-      amount: parseFloat(billForm.amount),
+      vendor_name: billForm.vendor.trim(),
+      amount: Math.round(amount * 100) / 100,
       due_date: billForm.due_date,
-      invoice_number: `BILL-${Date.now()}`,
       status: "pending",
-      notes: billForm.description,
+      notes: billForm.description || null,
     });
 
     if (error) {

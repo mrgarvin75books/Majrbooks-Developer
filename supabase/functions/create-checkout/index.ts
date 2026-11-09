@@ -25,15 +25,50 @@ serve(async (req) => {
   try {
     logStep("Function started");
     
-    const { priceId, withTrial } = await req.json();
+    const { priceId, withTrial } = await req.json().catch(() => ({}));
     logStep("Received request", { priceId, withTrial });
 
-    const authHeader = req.headers.get("Authorization")!;
-    const token = authHeader.replace("Bearer ", "");
+    // Only real MAJR Books plan prices may be purchased. Extra prices (e.g.
+    // yearly plans once created in Stripe) can be added via the
+    // STRIPE_ALLOWED_PRICE_IDS secret (comma-separated).
+    const allowedPrices = new Set([
+      "price_1SJGSlLJQAEtF5u9VXkaSglv", // Starter monthly
+      "price_1SJGT8LJQAEtF5u97a5xckAB", // Professional monthly
+      ...(Deno.env.get("STRIPE_ALLOWED_PRICE_IDS") ?? "").split(",").map((p) => p.trim()).filter(Boolean),
+    ]);
+    if (typeof priceId !== "string" || !allowedPrices.has(priceId)) {
+      return new Response(JSON.stringify({ error: "This plan is not available for purchase." }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400,
+      });
+    }
+
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Authentication required" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 401,
+      });
+    }
+    const token = authHeader.replace(/^Bearer\s+/i, "");
     const { data } = await supabaseClient.auth.getUser(token);
     const user = data.user;
     if (!user?.email) throw new Error("User not authenticated or email not available");
     logStep("User authenticated", { email: user.email });
+
+    // Redirect only to our own app, never to an arbitrary Origin header.
+    const appUrl = Deno.env.get("APP_URL") || "https://majrbooks.com";
+    const allowedOrigins = new Set([
+      appUrl,
+      "https://majrbooks.com",
+      "https://www.majrbooks.com",
+      ...(Deno.env.get("ALLOWED_APP_ORIGINS") ?? "").split(",").map((o) => o.trim()).filter(Boolean),
+    ]);
+    const requestOrigin = req.headers.get("origin") ?? "";
+    const redirectBase = allowedOrigins.has(requestOrigin) || /^http:\/\/localhost:\d+$/.test(requestOrigin)
+      ? requestOrigin
+      : appUrl;
+    let hadPreviousSubscription = false;
 
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") || "", { 
       apiVersion: "2025-08-27.basil" 
@@ -53,7 +88,9 @@ serve(async (req) => {
         limit: 10,
       });
       
-      const activeSub = existingSubs.data.find((sub: Stripe.Subscription) => 
+      hadPreviousSubscription = existingSubs.data.length > 0;
+
+      const activeSub = existingSubs.data.find((sub: Stripe.Subscription) =>
         sub.status === "active" || sub.status === "trialing"
       );
       
@@ -77,15 +114,16 @@ serve(async (req) => {
         },
       ],
       mode: "subscription",
-      success_url: `${req.headers.get("origin") || Deno.env.get("APP_URL") || "https://majrbooks.com"}/dashboard?checkout=success`,
-      cancel_url: `${req.headers.get("origin") || Deno.env.get("APP_URL") || "https://majrbooks.com"}/auth?checkout=cancelled`,
+      success_url: `${redirectBase}/dashboard?checkout=success`,
+      cancel_url: `${redirectBase}/auth?checkout=cancelled`,
       // Always collect payment method to ensure card is on file for auto-charge after trial
       payment_method_collection: "always",
       subscription_data: {},
     };
 
     // Add 14-day trial if requested - card won't be charged until trial ends
-    if (withTrial === true) {
+    // A Stripe trial is only offered to customers who have never subscribed.
+    if (withTrial === true && !hadPreviousSubscription) {
       sessionConfig.subscription_data = {
         trial_period_days: 14,
       };

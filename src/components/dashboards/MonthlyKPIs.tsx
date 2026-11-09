@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TrendingUp, TrendingDown, DollarSign, Percent, Flame, Clock, FileText, CheckCircle, AlertCircle } from 'lucide-react';
 import { useDashboardKPIs } from '@/hooks/useDashboardData';
+import { formatMoneyCompact } from '@/lib/money';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { Progress } from '@/components/ui/progress';
 
@@ -206,7 +207,7 @@ export function MonthlyKPIs() {
               <LineChart data={data.monthlyTrend}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                 <XAxis dataKey="month" className="text-xs" />
-                <YAxis className="text-xs" tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                <YAxis className="text-xs" tickFormatter={(v: number) => formatMoneyCompact(Math.round(v * 100))} />
                 <Tooltip 
                   formatter={(value: number) => formatCurrency(value)}
                   contentStyle={{ 

@@ -45,7 +45,9 @@ export const QuickAddExpenseDialog = ({ open, onOpenChange }: QuickAddExpenseDia
       const { error } = await supabase.from("transactions").insert({
         user_id: user.id,
         description: formData.description,
-        amount: -Math.abs(amount),
+        // Expenses are stored as positive amounts; `type` carries the direction
+        // (the table enforces amount > 0).
+        amount: Math.round(Math.abs(amount) * 100) / 100,
         type: "expense",
         date: formData.date,
       });

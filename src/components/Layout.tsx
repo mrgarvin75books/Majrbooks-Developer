@@ -61,6 +61,18 @@ import {
 import { cn } from "@/lib/utils";
 import majrLogo from "@/assets/logo-majr-books.jpg";
 import NotificationBadge from "@/components/NotificationBadge";
+import { QuickAddClientDialog } from "@/components/dialogs/QuickAddClientDialog";
+import { QuickAddRetainerDialog } from "@/components/dialogs/QuickAddRetainerDialog";
+import { QuickAddIncomeDialog } from "@/components/dialogs/QuickAddIncomeDialog";
+import { QuickAddExpenseDialog } from "@/components/dialogs/QuickAddExpenseDialog";
+import { QuickAddEstimateDialog } from "@/components/dialogs/QuickAddEstimateDialog";
+import { QuickAddProposalDialog } from "@/components/dialogs/QuickAddProposalDialog";
+import { QuickAddCreditDialog } from "@/components/dialogs/QuickAddCreditDialog";
+import { QuickAddBillDialog } from "@/components/dialogs/QuickAddBillDialog";
+import { QuickAddVendorDialog } from "@/components/dialogs/QuickAddVendorDialog";
+import { GlobalSearch } from "@/components/layout/GlobalSearch";
+import { businessNav, filterNav, practiceNav } from "@/components/layout/navigation";
+import { useCurrentBusiness } from "@/hooks/useCurrentBusiness";
 import {
   DndContext,
   closestCenter,
@@ -224,9 +236,10 @@ const SortableItem = ({
 };
 
 const Layout = ({ children }: LayoutProps) => {
-  const { signOut, user, subscriptionTier, subscribed, isTrial, trialDaysRemaining, isAdmin, isClient, isStaff, loading } = useAuth();
+  const { signOut, user, subscriptionTier, subscribed, isTrial, trialDaysRemaining, isAdmin, isClient, isStaff, isOwner, loading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const { canKeepBooks } = useCurrentBusiness();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('sidebarCollapsed');
@@ -235,6 +248,11 @@ const Layout = ({ children }: LayoutProps) => {
   const [expandedNavItems, setExpandedNavItems] = useState<Record<string, boolean>>({});
   const [isEditMode, setIsEditMode] = useState(false);
   const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+  // "+ New" opens the matching quick-add form instead of jumping to a list page.
+  const [quickAdd, setQuickAdd] = useState<
+    "client" | "retainer" | "income" | "expense" | "estimate" | "proposal" | "credit" | "bill" | "vendor" | null
+  >(null);
+  const closeQuickAdd = (open: boolean) => { if (!open) setQuickAdd(null); };
 
   const toggleSidebarCollapse = () => {
     setSidebarCollapsed(prev => {
@@ -259,6 +277,7 @@ const Layout = ({ children }: LayoutProps) => {
     {
       id: "dashboards", path: "/financial-dashboard", label: "Dashboards", icon: LayoutDashboard, hasChevron: true, module: "dashboard",
       subItems: [
+        { path: "/home", label: "Business Overview" },
         { path: "/financial-dashboard", label: "Financial Dashboard" },
         { path: "/reports", label: "Reports Overview" },
         { path: "/standard-reports", label: "Standard Reports" },
@@ -286,9 +305,9 @@ const Layout = ({ children }: LayoutProps) => {
       ],
     },
     {
-      id: "expenses", path: "/expense-tracking", label: "Expenses", icon: CreditCard, hasChevron: true, module: "expenses",
+      id: "expenses", path: "/expenses", label: "Expenses", icon: CreditCard, hasChevron: true, module: "expenses",
       subItems: [
-        { path: "/expense-tracking", label: "Expense Tracking" },
+        // /expense-tracking is a public marketing page, not the expenses screen
         { path: "/expenses", label: "All Expenses" },
       ],
     },
@@ -302,6 +321,7 @@ const Layout = ({ children }: LayoutProps) => {
         { path: "/trial-balance", label: "Trial Balance" },
         { path: "/revenue-by-client", label: "Revenue by Client" },
         { path: "/journal-entry-report", label: "Journal Entry Report" },
+        { path: "/schedule-c", label: "Schedule C & P&L from Statements" },
       ],
     },
     {
@@ -447,12 +467,13 @@ const Layout = ({ children }: LayoutProps) => {
   const moduleMapping: Record<string, string> = {
     "/dashboard": "dashboard",
     "/invoices": "invoices",
-    "/expense-tracking": "expenses",
+    "/expenses": "expenses",
     "/bank-transactions": "transactions",
     "/reports": "reports",
     "/payroll-setup": "payroll",
     "/payroll": "payroll",
     "/tax-returns": "tax-returns",
+    "/schedule-c": "tax-returns",
     "/tasks": "tasks",
     "/team": "team",
     "/accounting": "accounting",
@@ -474,7 +495,6 @@ const Layout = ({ children }: LayoutProps) => {
     { path: "/client-invoices", label: "My Invoices", icon: Receipt },
     { path: "/client-ai", label: "AI Assistant", icon: Bot },
     { path: "/client-support", label: "Support", icon: MessageCircle },
-    { path: "/training", label: "Training", icon: GraduationCap },
     { path: "/client-settings", label: "Settings", icon: Settings },
   ];
 
@@ -547,13 +567,12 @@ const Layout = ({ children }: LayoutProps) => {
         },
         {
           id: "expenses-nav",
-          path: "/expense-tracking",
+          path: "/expenses",
           label: "Expenses",
           icon: CreditCard,
           module: "expenses",
           subItems: [
-            { path: "/expense-tracking", label: "Receipt capture" },
-            { path: "/expenses", label: "Expense reports" },
+            { path: "/expenses", label: "Expenses and bills" },
           ],
         },
       ],
@@ -563,6 +582,7 @@ const Layout = ({ children }: LayoutProps) => {
       title: "Compliance",
       items: [
         { id: "tax-returns-nav", path: "/tax-returns", label: "Tax Returns", icon: FileSpreadsheet, module: "tax-returns" },
+        { id: "schedule-c-nav", path: "/schedule-c", label: "Schedule C & P&L", icon: FileSpreadsheet, module: "tax-returns" },
         { id: "tax-majr-ai-nav", path: "https://taxmajr.ai/", label: "Tax Majr AI", icon: Sparkles, isExternal: true },
         {
           id: "reports-nav",
@@ -585,7 +605,6 @@ const Layout = ({ children }: LayoutProps) => {
       items: [
         { id: "workflow-nav", path: "/workflow-automation", label: "Workflow Automation", icon: RefreshCw, module: "workflow-automation" },
         { id: "work-nav", path: "/transactions", label: "Work", icon: Briefcase },
-        { id: "ai-support-nav", path: "/client-support", label: "AI Support", icon: MessageCircle },
       ],
     },
     {
@@ -600,23 +619,47 @@ const Layout = ({ children }: LayoutProps) => {
     },
   ];
 
-  const staffBlockedPaths = [
-    "/team", "/user-permissions", "/bulk-client-upload", "/bulk-client-numbers",
+  // Must mirror the route guards in App.tsx so no link leads to a redirect.
+  const adminOnlyPaths = [
+    "/bulk-client-upload", "/bulk-client-numbers",
     "/billing/client-subscriptions", "/billing/product-recommendations",
-    "/billing/discover-more", "/billing/firm-subscriptions",
-    "/billing/billing-details", "/billing/revenue-share",
+    "/billing/discover-more", "/billing/revenue-share",
   ];
+  const ownerOnlyPaths = [
+    "/team", "/user-permissions",
+    "/billing/firm-subscriptions", "/billing/billing-details",
+  ];
+  const canSeePath = (path: string): boolean => {
+    const base = path.split("?")[0];
+    if (adminOnlyPaths.includes(base)) return isAdmin;
+    if (ownerOnlyPaths.includes(base)) return isAdmin || isOwner;
+    return true;
+  };
 
   const practiceNavSections = navSections
     .map(section => ({
       ...section,
-      items: section.items.filter(item => {
-        if (item.isExternal) return true;
-        if (isStaff && staffBlockedPaths.includes(item.path)) return false;
-        return isAdmin || isStaff || canAccessPath(item.path);
-      }),
+      items: section.items
+        .map(item => item.subItems
+          ? { ...item, subItems: item.subItems.filter(sub => canSeePath(sub.path)) }
+          : item)
+        .filter(item => {
+          if (item.isExternal) return true;
+          // A group whose every link is hidden is hidden too
+          if (item.subItems && item.subItems.length === 0) return false;
+          if (!item.subItems && !canSeePath(item.path)) return false;
+          // Team members work under their owner's plan, so plan-tier gating doesn't apply to them
+          return isAdmin || isStaff || canAccessPath(item.path);
+        }),
     }))
     .filter(section => section.items.length > 0);
+
+  // Pages offered by search: every page this user can actually open.
+  const searchSections = filterNav(
+    [...businessNav, ...practiceNav],
+    { isAdmin, isOwner, isStaff, canKeepBooks },
+    (m) => isAdmin || isStaff || hasAccessToModule(subscriptionTier, m),
+  );
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -673,60 +716,38 @@ const Layout = ({ children }: LayoutProps) => {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-56 bg-card border border-border z-50" align="start">
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/dashboard" className="flex items-center gap-2">
-                    <UserCircle className="h-4 w-4" /><span>Client</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => setQuickAdd("client")} className="flex items-center gap-2 cursor-pointer">
+                  <UserCircle className="h-4 w-4" /><span>Client</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/invoices" className="flex items-center gap-2">
-                    <RotateCcw className="h-4 w-4" /><span>Retainer</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => setQuickAdd("retainer")} className="flex items-center gap-2 cursor-pointer">
+                  <RotateCcw className="h-4 w-4" /><span>Retainer</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/invoices" className="flex items-center gap-2">
-                    <Receipt className="h-4 w-4" /><span>Invoice</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => navigate("/invoice/new")} className="flex items-center gap-2 cursor-pointer">
+                  <Receipt className="h-4 w-4" /><span>Invoice</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/invoice-templates" className="flex items-center gap-2">
-                    <RefreshCw className="h-4 w-4" /><span>Recurring Template</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => navigate("/invoice-templates")} className="flex items-center gap-2 cursor-pointer">
+                  <RefreshCw className="h-4 w-4" /><span>Recurring Template</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/bank-transactions" className="flex items-center gap-2">
-                    <DollarSign className="h-4 w-4" /><span>Other Income</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => setQuickAdd("income")} className="flex items-center gap-2 cursor-pointer">
+                  <DollarSign className="h-4 w-4" /><span>Other Income</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/expense-tracking" className="flex items-center gap-2">
-                    <Wallet className="h-4 w-4" /><span>Expense</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => setQuickAdd("expense")} className="flex items-center gap-2 cursor-pointer">
+                  <Wallet className="h-4 w-4" /><span>Expense</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/invoices" className="flex items-center gap-2">
-                    <FileSpreadsheet className="h-4 w-4" /><span>Estimate</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => setQuickAdd("estimate")} className="flex items-center gap-2 cursor-pointer">
+                  <FileSpreadsheet className="h-4 w-4" /><span>Estimate</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/invoices" className="flex items-center gap-2">
-                    <Lightbulb className="h-4 w-4" /><span>Proposal</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => setQuickAdd("proposal")} className="flex items-center gap-2 cursor-pointer">
+                  <Lightbulb className="h-4 w-4" /><span>Proposal</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/invoices" className="flex items-center gap-2">
-                    <CreditCard className="h-4 w-4" /><span>Credit</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => setQuickAdd("credit")} className="flex items-center gap-2 cursor-pointer">
+                  <CreditCard className="h-4 w-4" /><span>Credit</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/expense-tracking" className="flex items-center gap-2">
-                    <FileText className="h-4 w-4" /><span>Bill</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => setQuickAdd("bill")} className="flex items-center gap-2 cursor-pointer">
+                  <FileText className="h-4 w-4" /><span>Bill</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild className="flex items-center gap-2 cursor-pointer">
-                  <Link to="/payroll-setup" className="flex items-center gap-2">
-                    <Building2 className="h-4 w-4" /><span>Vendor</span>
-                  </Link>
+                <DropdownMenuItem onSelect={() => setQuickAdd("vendor")} className="flex items-center gap-2 cursor-pointer">
+                  <Building2 className="h-4 w-4" /><span>Vendor</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1022,7 +1043,7 @@ const Layout = ({ children }: LayoutProps) => {
                 {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
               </Button>
               <div className="flex items-center space-x-2">
-                <Button variant="ghost" size="sm">
+                <Button variant="ghost" size="sm" onClick={toggleSidebarCollapse} aria-label="Collapse or expand the menu">
                   <Menu className="h-5 w-5" />
                 </Button>
                 <span className="text-sm">GO TO MAJR BOOKS</span>
@@ -1031,11 +1052,23 @@ const Layout = ({ children }: LayoutProps) => {
 
             <div className="flex-1 max-w-2xl mx-4">
               <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Navigate or search for transactions, contacts, reports, and more"
-                  className="w-full px-4 py-2 border border-border rounded-md bg-background text-sm"
-                />
+                {/* Same look as before; clicking (or Ctrl/⌘+K) now opens a real search. */}
+                {!isClient && (
+                  <GlobalSearch
+                    sections={searchSections}
+                    trigger={(open) => (
+                      <input
+                        type="text"
+                        readOnly
+                        onClick={open}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key.length === 1) open(); }}
+                        placeholder="Navigate or search for transactions, contacts, reports, and more"
+                        className="w-full px-4 py-2 border border-border rounded-md bg-background text-sm cursor-pointer"
+                        aria-label="Search"
+                      />
+                    )}
+                  />
+                )}
               </div>
             </div>
 
@@ -1138,6 +1171,16 @@ const Layout = ({ children }: LayoutProps) => {
         )}
 
         <UpgradeModal open={upgradeModalOpen} onOpenChange={setUpgradeModalOpen} />
+
+        <QuickAddClientDialog open={quickAdd === "client"} onOpenChange={closeQuickAdd} />
+        <QuickAddRetainerDialog open={quickAdd === "retainer"} onOpenChange={closeQuickAdd} />
+        <QuickAddIncomeDialog open={quickAdd === "income"} onOpenChange={closeQuickAdd} />
+        <QuickAddExpenseDialog open={quickAdd === "expense"} onOpenChange={closeQuickAdd} />
+        <QuickAddEstimateDialog open={quickAdd === "estimate"} onOpenChange={closeQuickAdd} />
+        <QuickAddProposalDialog open={quickAdd === "proposal"} onOpenChange={closeQuickAdd} />
+        <QuickAddCreditDialog open={quickAdd === "credit"} onOpenChange={closeQuickAdd} />
+        <QuickAddBillDialog open={quickAdd === "bill"} onOpenChange={closeQuickAdd} />
+        <QuickAddVendorDialog open={quickAdd === "vendor"} onOpenChange={closeQuickAdd} />
 
         <main className="flex-1 p-6 bg-background">{children}</main>
       </div>

@@ -1,8 +1,8 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { User, Session } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
-import { getTierByProductId, SubscriptionTier, TRIAL_DURATION_DAYS } from "@/lib/subscriptionTiers";
+import { getTierByProductId, SubscriptionTier } from "@/lib/subscriptionTiers";
 
 type AppRole = 'admin' | 'user' | 'client';
 
@@ -25,9 +25,17 @@ interface AuthContextType {
   checkSubscription: () => Promise<void>;
   openCustomerPortal: () => Promise<void>;
   loading: boolean;
+  /** Platform administrator (MAJR Books staff). */
   isAdmin: boolean;
+  /** Invited client portal user. */
   isClient: boolean;
+  /**
+   * Invited team member (accountant/employee) working inside another
+   * account owner's books. Covered by that owner's subscription.
+   */
   isStaff: boolean;
+  /** Account owner: a self-signed-up firm/business that pays for its own plan. */
+  isOwner: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -36,6 +44,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<AppRole | null>(null);
+  const [isTeamMember, setIsTeamMember] = useState(false);
+  const [roleLoading, setRoleLoading] = useState(true);
+  const roleUserIdRef = useRef<string | null>(null);
   const [subscriptionTier, setSubscriptionTier] = useState<SubscriptionTier | null>(null);
   const [subscribed, setSubscribed] = useState(false);
   const [subscriptionEnd, setSubscriptionEnd] = useState<string | null>(null);
@@ -48,14 +59,30 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const navigate = useNavigate();
 
   const fetchUserRole = async (userId: string) => {
-    const { data, error } = await supabase
-      .from('app_user_roles')
-      .select('role')
-      .eq('user_id', userId)
-      .single();
-    
-    const userRole = (!error && data) ? data.role as AppRole : 'user';
-    setRole(userRole);
+    // Only block the UI on the first load for this user. Later refreshes
+    // (e.g. TOKEN_REFRESHED events) update in the background so pages are
+    // never unmounted by the route guard's loading spinner.
+    if (roleUserIdRef.current !== userId) setRoleLoading(true);
+    try {
+      const [{ data: roleRows, error }, { data: membership }] = await Promise.all([
+        supabase.from('app_user_roles').select('role').eq('user_id', userId),
+        supabase
+          .from('team_members')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('is_active', true)
+          .limit(1),
+      ]);
+
+      // A user can hold more than one row; the most privileged wins.
+      const roles = new Set((!error && roleRows ? roleRows : []).map((r) => r.role as AppRole));
+      const userRole: AppRole = roles.has('admin') ? 'admin' : roles.has('client') ? 'client' : 'user';
+      setRole(userRole);
+      setIsTeamMember(!!membership && membership.length > 0);
+      roleUserIdRef.current = userId;
+    } finally {
+      setRoleLoading(false);
+    }
   };
 
   const checkSubscription = async () => {
@@ -130,37 +157,19 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
   };
 
-  const sendLoginNotification = async (email: string, fullName: string | undefined, eventType: 'login' | 'signup') => {
+  // The server derives the recipient from the account itself; for signups
+  // without a session yet, it verifies the new account by id.
+  const sendLoginNotification = async (eventType: 'login' | 'signup', userId?: string) => {
     try {
       await supabase.functions.invoke('send-login-notification', {
         body: {
-          email,
-          fullName,
           eventType,
+          userId,
           userAgent: navigator.userAgent,
-          timestamp: new Date().toISOString()
         }
       });
     } catch (err) {
       console.error('Failed to send login notification:', err);
-    }
-  };
-
-  const startFreeTrial = async (userId: string) => {
-    try {
-      const trialEndDate = new Date();
-      trialEndDate.setDate(trialEndDate.getDate() + TRIAL_DURATION_DAYS);
-      
-      const { error } = await supabase
-        .from('profiles')
-        .update({ trial_ends_at: trialEndDate.toISOString() })
-        .eq('id', userId);
-      
-      if (error) {
-        console.error('Failed to start free trial:', error);
-      }
-    } catch (err) {
-      console.error('Error starting free trial:', err);
     }
   };
 
@@ -181,6 +190,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           }, 0);
         } else {
           setRole(null);
+          setIsTeamMember(false);
+          setRoleLoading(false);
+          roleUserIdRef.current = null;
           setSubscribed(false);
           setSubscriptionTier(null);
           setSubscriptionEnd(null);
@@ -197,6 +209,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       
       if (session?.user) {
         fetchUserRole(session.user.id);
+      } else {
+        setRoleLoading(false);
       }
     });
 
@@ -229,7 +243,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     
     if (!error && data.user) {
       // Send login notification
-      sendLoginNotification(email, data.user.user_metadata?.full_name, 'login');
+      sendLoginNotification('login');
     }
     
     return { error };
@@ -260,11 +274,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }
 
     if (data.user) {
-      // Start free trial for new users
-      await startFreeTrial(data.user.id);
-
-      // Send signup notification
-      sendLoginNotification(email, fullName, 'signup');
+      // The 14-day trial is granted by the database signup trigger.
+      sendLoginNotification('signup', data.user.id);
     }
 
     // If email confirmation is required, signUp succeeds but returns no session —
@@ -283,6 +294,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const signOut = async () => {
     await supabase.auth.signOut();
     setRole(null);
+    setIsTeamMember(false);
+    roleUserIdRef.current = null;
     setSubscribed(false);
     setSubscriptionTier(null);
     setSubscriptionEnd(null);
@@ -312,10 +325,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       updatePassword,
       checkSubscription,
       openCustomerPortal,
-      loading,
+      // Not "loaded" until the role is known, so route guards never act on a null role.
+      loading: loading || (!!user && roleLoading),
       isAdmin: role === 'admin',
       isClient: role === 'client',
-      isStaff: role === 'user'
+      isStaff: role === 'user' && isTeamMember,
+      isOwner: role === 'user' && !isTeamMember,
     }}>
       {children}
     </AuthContext.Provider>

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { assertProjectStorageUrl } from "../_shared/security.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -49,7 +50,15 @@ serve(async (req) => {
     const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
     if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY is not configured');
 
-    const fileResponse = await fetch(fileUrl);
+    let safeFileUrl: string;
+    try {
+      safeFileUrl = assertProjectStorageUrl(fileUrl, "fileUrl");
+    } catch (e) {
+      return new Response(JSON.stringify({ error: (e as Error).message }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const fileResponse = await fetch(safeFileUrl);
     if (!fileResponse.ok) throw new Error(`Failed to fetch file: ${fileResponse.status}`);
 
     const ext = fileName.split('.').pop()?.toLowerCase() || '';

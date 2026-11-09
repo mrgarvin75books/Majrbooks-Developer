@@ -55,12 +55,13 @@ export const DEFAULT_PERMISSIONS: Record<string, Record<string, ModulePermission
 };
 
 export const usePermissions = () => {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, isClient } = useAuth();
 
   const { data: permissions, isLoading } = useQuery({
-    queryKey: ['user-permissions', user?.id],
+    queryKey: ['user-permissions', user?.id, isClient],
     queryFn: async (): Promise<UserPermissions | null> => {
-      if (!user) return null;
+      // Clients use the client portal only; they get no practice-module access.
+      if (!user || isClient) return null;
 
       // Check if user is an owner (has their own team members)
       const { data: ownedTeam } = await supabase
@@ -93,7 +94,7 @@ export const usePermissions = () => {
         `)
         .eq('user_id', user.id)
         .eq('is_active', true)
-        .single();
+        .maybeSingle();
 
       if (!teamMember) {
         // Default to admin if no team member record (owner)

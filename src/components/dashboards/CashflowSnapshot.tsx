@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Wallet, ArrowUpRight, ArrowDownRight, TrendingUp, CheckCircle, AlertCircle } from 'lucide-react';
 import { useCashflowData } from '@/hooks/useDashboardData';
+import { formatMoneyCompact } from '@/lib/money';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Progress } from '@/components/ui/progress';
 
@@ -160,7 +161,7 @@ export function CashflowSnapshot() {
                   />
                   <YAxis 
                     className="text-xs" 
-                    tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                    tickFormatter={(v: number) => formatMoneyCompact(Math.round(v * 100))}
                   />
                   <Tooltip 
                     formatter={(value: number, name: string) => [formatCurrency(value), name === 'balance' ? 'Balance' : name]}

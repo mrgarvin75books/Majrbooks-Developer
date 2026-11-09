@@ -14,6 +14,7 @@ import { CreateInvoiceDialog } from "@/components/CreateInvoiceDialog";
 import { EditInvoiceDialog } from "@/components/EditInvoiceDialog";
 import { RecurringInvoiceDialog } from "@/components/RecurringInvoiceDialog";
 import { EditClientDialog } from "@/components/EditClientDialog";
+import { ClientTransactionsCard } from "@/components/clients/ClientTransactionsCard";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -551,6 +552,8 @@ const ClientDetails = () => {
             </CardContent>
           </Card>
         )}
+
+        {id && <ClientTransactionsCard clientId={id} clientName={client.client_name} />}
 
         {/* Invoices Section */}
         <Card>

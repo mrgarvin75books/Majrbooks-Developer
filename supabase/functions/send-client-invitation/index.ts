@@ -1,20 +1,15 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { Resend } from "https://esm.sh/resend@2.0.0";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
-interface InvitationRequest {
-  clientName: string;
-  clientEmail: string;
-  firmId: string;
-  inviteToken?: string;
-  message?: string;
-  senderName: string;
-  senderEmail: string;
-}
+import {
+  corsHeaders,
+  errorResponse,
+  escapeHtml,
+  getScopeOwnerId,
+  HttpError,
+  jsonResponse,
+  requireUser,
+  serviceClient,
+} from "../_shared/security.ts";
 
 serve(async (req) => {
   // Handle CORS preflight requests
@@ -43,17 +38,72 @@ serve(async (req) => {
 
     const resend = new Resend(resendApiKey);
 
-    const { clientName, clientEmail, firmId, inviteToken, message, senderName, senderEmail }: InvitationRequest = await req.json();
+    // The caller must be signed in, and the invitation must belong to the books
+    // they work in. Every value in the email is read from the database.
+    const caller = await requireUser(req);
+    const supabase = serviceClient();
+    const ownerId = await getScopeOwnerId(supabase, caller.id);
+    const body = await req.json().catch(() => ({}));
 
-    console.log(`Sending invitation to ${clientEmail} from ${senderName}`);
+    const selectCols = "id, user_id, client_name, client_email, message, invite_token, inviter_business_name, status";
+    let invitation: Record<string, any> | null = null;
+
+    if (typeof body?.inviteToken === "string" && body.inviteToken) {
+      const { data, error } = await supabase
+        .from("client_invitations")
+        .select(selectCols)
+        .eq("invite_token", body.inviteToken)
+        .in("user_id", [caller.id, ownerId])
+        .maybeSingle();
+      if (error) throw error;
+      invitation = data;
+    } else if (typeof body?.clientEmail === "string" && body.clientEmail) {
+      // Resend by email (e.g. from the client list): rotate the token server-side.
+      const { data, error } = await supabase
+        .from("client_invitations")
+        .select(selectCols)
+        .ilike("client_email", body.clientEmail.trim())
+        .in("user_id", [caller.id, ownerId])
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      if (data && data.status !== "accepted") {
+        const newToken = crypto.randomUUID();
+        const expires = new Date();
+        expires.setDate(expires.getDate() + 7);
+        const { error: updErr } = await supabase
+          .from("client_invitations")
+          .update({
+            invite_token: newToken,
+            expires_at: expires.toISOString(),
+            sent_at: new Date().toISOString(),
+            status: "pending",
+            used_at: null,
+          })
+          .eq("id", data.id);
+        if (updErr) throw updErr;
+        data.invite_token = newToken;
+      }
+      invitation = data;
+    }
+
+    if (!invitation || !invitation.invite_token) {
+      throw new HttpError(404, "No pending invitation was found for this client. Send a new invitation from Client Invitations.");
+    }
+    if (invitation.status === "accepted") {
+      throw new HttpError(409, "This client has already accepted their invitation");
+    }
+
+    const clientEmail: string = invitation.client_email;
+    const clientName = escapeHtml(invitation.client_name);
+    const rawSenderName = String(invitation.inviter_business_name || "MAJR Books");
+    const senderName = escapeHtml(rawSenderName);
+    const message = invitation.message ? escapeHtml(String(invitation.message).slice(0, 2000)) : "";
 
     // Use env var if set, otherwise fall back to majrbooks.com
     const appBaseUrl = Deno.env.get("APP_URL") || "https://majrbooks.com";
-
-    // Use token-based URL if token provided, otherwise fall back to firm-based
-    const inviteUrl = inviteToken
-      ? `${appBaseUrl}/accept-client-invite?token=${inviteToken}`
-      : `${appBaseUrl}/accept-client-invite?firm=${firmId}`;
+    const inviteUrl = `${appBaseUrl}/accept-client-invite?token=${encodeURIComponent(invitation.invite_token)}`;
 
     // Prefer embedding the logo in the email itself (CID) for maximum compatibility.
     // Some email clients block or fail to load remote images, which can appear as a broken logo.
@@ -210,7 +260,7 @@ serve(async (req) => {
     const { data: emailData, error: emailError } = await resend.emails.send({
       from: 'MAJR Books <support@majrbooks.com>',
       to: [clientEmail],
-      subject: `${senderName} invited you to your MAJR Books client portal`,
+      subject: `${rawSenderName.replace(/[\r\n]/g, " ")} invited you to your MAJR Books client portal`,
       html: emailHtml,
       attachments,
     });
@@ -220,29 +270,12 @@ serve(async (req) => {
       throw new Error(`Failed to send email: ${emailError.message}`);
     }
 
-    console.log("Invitation email sent successfully:", emailData);
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: 'Invitation email sent successfully',
-        emailId: emailData?.id
-      }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200 
-      }
-    );
-
+    return jsonResponse({
+      success: true,
+      message: 'Invitation email sent successfully',
+      emailId: emailData?.id
+    });
   } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    console.error("Error in send-client-invitation:", errorMessage);
-    return new Response(
-      JSON.stringify({ error: errorMessage }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500
-      }
-    );
+    return errorResponse(error);
   }
 });
