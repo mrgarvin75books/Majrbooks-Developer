@@ -21,11 +21,11 @@ const Auth = () => {
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
   const {
     signIn, signUp, user, subscribed, isTrial, trialDaysRemaining, checkSubscription, isAdmin, isClient, isStaff,
-    isPasswordRecovery, updatePassword,
+    isPasswordRecovery, updatePassword, loading: authLoading,
   } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [loginData, setLoginData] = useState({ email: "", password: "" });
   const [signupData, setSignupData] = useState({ email: "", password: "", fullName: "", businessName: "" });
@@ -35,6 +35,18 @@ const Auth = () => {
   // Set via the `?reset=true` link Supabase sends, until the PASSWORD_RECOVERY auth
   // event fires (which can lag a tick behind the redirect landing).
   const showResetPasswordForm = isPasswordRecovery || searchParams.get("reset") === "true";
+  // An expired or already-used link comes back with an error in the hash (implicit
+  // flow) or the query (PKCE). Capture it on first render, before anything clears it.
+  const [resetLinkError] = useState<string | null>(() => {
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+    const query = new URLSearchParams(window.location.search);
+    const desc = hash.get("error_description") || query.get("error_description");
+    const code = hash.get("error") || query.get("error");
+    return desc ? desc.replace(/\+/g, " ") : code;
+  });
+  // Without a recovery session there is nothing to update, so updateUser would fail.
+  const resetLinkInvalid = showResetPasswordForm && !isPasswordRecovery &&
+    (!!resetLinkError || (!authLoading && !user));
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
   const [passwordUpdated, setPasswordUpdated] = useState(false);
@@ -338,11 +350,35 @@ const Auth = () => {
             <CardDescription className="text-base">
               {passwordUpdated
                 ? "Your password has been updated"
-                : "Choose a new password for your account"}
+                : resetLinkInvalid
+                  ? "This link can't be used"
+                  : "Choose a new password for your account"}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {passwordUpdated ? (
+            {resetLinkInvalid && !passwordUpdated ? (
+              <div className="space-y-4">
+                <p className="text-center text-muted-foreground">
+                  This password reset link is invalid or has expired. Reset links can only be used once
+                  and expire after a short time.
+                </p>
+                <Button
+                  className="w-full gap-2"
+                  onClick={() => {
+                    window.history.replaceState(null, "", window.location.pathname);
+                    setSearchParams({});
+                    setShowForgotPassword(true);
+                  }}
+                >
+                  <Mail className="h-4 w-4" />
+                  Request a New Link
+                </Button>
+              </div>
+            ) : !user && !passwordUpdated ? (
+              <div className="flex justify-center py-6">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : passwordUpdated ? (
               <div className="flex flex-col items-center justify-center py-6 space-y-4">
                 <div className="h-16 w-16 rounded-full bg-green-100 flex items-center justify-center">
                   <Check className="h-8 w-8 text-green-600" />

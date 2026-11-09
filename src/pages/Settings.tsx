@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import Layout from "@/components/Layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TaxRatesManager } from "@/components/TaxRatesManager";
+import { PasswordSettingsCard } from "@/components/settings/PasswordSettingsCard";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -335,6 +336,8 @@ const Settings = () => {
             </form>
           </CardContent>
         </Card>
+
+        <PasswordSettingsCard />
 
         {/* Subscription Management */}
         <Card>
