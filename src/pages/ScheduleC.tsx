@@ -525,7 +525,13 @@ export default function ScheduleC() {
 
   const addFiles = useCallback(async (files: FileList | globalThis.File[]) => {
     const processed: UploadedFile[] = [];
+    const isSame = (a: { name: string; size: number }, b: { name: string; size: number }) => a.name === b.name && a.size === b.size;
     for (const f of Array.from(files)) {
+      // The same statement added twice would count every transaction twice.
+      if (uploadedFiles.some((u) => isSame(u, f)) || processed.some((u) => isSame(u, f))) {
+        toast({ title: "Already added", description: `${f.name} is already in the list, so it was skipped.` });
+        continue;
+      }
       const r = await processFile(f);
       if (r) processed.push(r);
     }
@@ -534,7 +540,7 @@ export default function ScheduleC() {
       const n = processed.reduce((s, f) => s + f.lines.length, 0);
       toast({ title: "Files loaded", description: `${n} transactions found in ${processed.length} file(s).` });
     }
-  }, [processFile]);
+  }, [processFile, uploadedFiles]);
 
   const removeFile = useCallback((index: number) => {
     setUploadedFiles((prev) => prev.filter((_, i) => i !== index));

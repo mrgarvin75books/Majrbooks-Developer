@@ -45,6 +45,8 @@ const norm = (v: Cell) => String(v ?? "").trim().toLowerCase();
 const HEADER_PATTERNS = {
   date: /^(transaction |trans\.? |posting |posted |post |value |effective )?date$|^date |date$|^posted on$/,
   description: /desc|memo|payee|details|narrative|merchant|name|particulars|reference|transaction$/,
+  /** Columns that are clearly the description; preferred over weaker matches like "Details" (Chase: DEBIT/CREDIT). */
+  descriptionStrong: /desc|memo|payee|narrative|merchant|^name$|payee name|merchant name/,
   amount: /^amount|amount$|^amt$|^value$|transaction amount|net amount/,
   debit: /debit|withdraw|money out|paid out|payments?$|^out$|charges?$|spent/,
   credit: /credit|deposit|money in|paid in|receipts?$|^in$|received/,
@@ -71,7 +73,8 @@ export function detectColumns(header: Cell[]): ColumnMapping {
   const debit = find(HEADER_PATTERNS.debit, [date ?? -1]);
   const credit = find(HEADER_PATTERNS.credit, [date ?? -1, debit ?? -1]);
   const amount = debit !== null && credit !== null ? null : find(HEADER_PATTERNS.amount, [date ?? -1]);
-  const description = find(HEADER_PATTERNS.description, [date ?? -1, amount ?? -1, debit ?? -1, credit ?? -1]);
+  const used = [date ?? -1, amount ?? -1, debit ?? -1, credit ?? -1];
+  const description = find(HEADER_PATTERNS.descriptionStrong, used) ?? find(HEADER_PATTERNS.description, used);
   return { date, description, amount, debit: amount === null ? debit : null, credit: amount === null ? credit : null };
 }
 
@@ -92,9 +95,15 @@ export function parseDateCell(value: Cell): string | null {
   if (value === null || value === undefined || value === "") return null;
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) return null;
-    // SheetJS creates dates at local midnight (or UTC midnight for some files); round to the nearest day.
-    const d = new Date(value.getTime() + 12 * 3600 * 1000);
-    const y = d.getUTCFullYear(), m = d.getUTCMonth() + 1, day = d.getUTCDate();
+    // SheetJS makes dates at local midnight, or UTC midnight for some files, or
+    // local date + time when the cell has a time. Use whichever calendar day
+    // the cell actually names; never shift a date-with-time to another day.
+    const v = value;
+    const localMidnight = v.getHours() === 0 && v.getMinutes() === 0 && v.getSeconds() === 0;
+    const utcMidnight = v.getUTCHours() === 0 && v.getUTCMinutes() === 0 && v.getUTCSeconds() === 0;
+    const [y, m, day] = !localMidnight && utcMidnight
+      ? [v.getUTCFullYear(), v.getUTCMonth() + 1, v.getUTCDate()]
+      : [v.getFullYear(), v.getMonth() + 1, v.getDate()];
     return validDate(y, m, day) ? iso(y, m, day) : null;
   }
   if (typeof value === "number") {
@@ -109,7 +118,7 @@ export function parseDateCell(value: Cell): string | null {
     const [y, mo, d] = [+m[1], +m[2], +m[3]];
     return validDate(y, mo, d) ? iso(y, mo, d) : null;
   }
-  if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/))) {
+  if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})(?:[\sT]+\d{1,2}:\d{2}.*)?$/))) {
     const [a, b] = [+m[1], +m[2]];
     let y = +m[3];
     if (y < 100) y += 2000;

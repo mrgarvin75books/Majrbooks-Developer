@@ -38,6 +38,17 @@ describe("parseDateCell", () => {
   });
 
   it.each(["", "2/30/2026", "hello", 5])("rejects %p", (v) => expect(parseDateCell(v as Cell)).toBeNull());
+
+  it("keeps the same day when the cell has a time", () => {
+    expect(parseDateCell("01/15/2026 10:30")).toBe("2026-01-15");
+    expect(parseDateCell("12/31/2026 23:59:00")).toBe("2026-12-31");
+    expect(parseDateCell(new Date(2026, 0, 15, 10, 30))).toBe("2026-01-15");
+    expect(parseDateCell(new Date(2026, 11, 31, 23, 59))).toBe("2026-12-31");
+  });
+
+  it("reads UTC-midnight dates as that day", () => {
+    expect(parseDateCell(new Date(Date.UTC(2026, 0, 15)))).toBe("2026-01-15");
+  });
 });
 
 describe("column detection and parsing", () => {
@@ -84,6 +95,27 @@ describe("column detection and parsing", () => {
     expect(res.lines.map((l) => [l.cents, l.direction])).toEqual([[4510, "out"], [120000, "in"]]);
   });
 
+  it("prefers the Description column over Chase's Details (DEBIT/CREDIT) column", () => {
+    const header: Cell[] = ["Details", "Posting Date", "Description", "Amount", "Type", "Balance", "Check or Slip #"];
+    expect(detectColumns(header)).toMatchObject({ date: 1, description: 2, amount: 3 });
+  });
+
+  it("reads a Chase CSV end to end through SheetJS", () => {
+    const csv = [
+      "Details,Posting Date,Description,Amount,Type,Balance,Check or Slip #",
+      'DEBIT,01/05/2026,"STARBUCKS #123",-4.50,DEBIT_CARD,995.50,',
+      'CREDIT,01/06/2026,"STRIPE TRANSFER",1250.00,ACH_CREDIT,2245.50,',
+    ].join("\n");
+    const wb = XLSX.read(csv, { type: "string", cellDates: true, raw: false });
+    const rows = XLSX.utils.sheet_to_json<Cell[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: null, blankrows: false });
+    const h = findHeaderRow(rows);
+    const res = parseLines(rows, h, detectColumns(rows[h]));
+    expect(res.lines.map((l) => [l.date, l.description, l.direction, l.cents])).toEqual([
+      ["2026-01-05", "STARBUCKS #123", "out", 450],
+      ["2026-01-06", "STRIPE TRANSFER", "in", 125000],
+    ]);
+  });
+
   it("supports banks that show money out as positive", () => {
     const rows: Cell[][] = [["Date", "Description", "Amount"], ["1/1/2026", "STAPLES", 20]];
     const res = parseLines(rows, 0, detectColumns(rows[0]), "positive_is_out");
@@ -117,6 +149,21 @@ describe("categorize", () => {
     ["STRIPE TRANSFER ST-ABC", "in", "Sales / gross receipts"],
     ["INTEREST PAYMENT", "in", "Other business income"],
     ["SOMETHING UNKNOWN", "out", "Needs review"],
+    // Rule-order regressions
+    ["MONTHLY MAINTENANCE FEE", "out", "Bank and merchant fees"],
+    ["MONTHLY SERVICE FEE", "out", "Bank and merchant fees"],
+    ["ENTERPRISE RENT-A-CAR", "out", "Travel"],
+    ["FRONTIER AIRLINES", "out", "Travel"],
+    ["FRONTIER COMMUNICATIONS", "out", "Telephone and internet"],
+    ["UBER EATS ORDER", "out", "Meals"],
+    ["UBER TRIP", "out", "Travel"],
+    ["AMAZON WEB SERVICES", "out", "Software and subscriptions"],
+    ["SPIRIT HALLOWEEN", "out", "Needs review"],
+    ["SPIRIT AIRLINES", "out", "Travel"],
+    ["ADOBE LICENSE", "out", "Software and subscriptions"],
+    ["DMV LICENSE RENEWAL", "out", "Taxes and licenses"],
+    ["OFFICE RENT JANUARY", "out", "Rent or lease: business property"],
+    ["HVAC REPAIR", "out", "Repairs and maintenance"],
   ] as const)("%s (%s) -> %s", (desc, dir, cat) => {
     expect(categorize(desc, dir).category).toBe(cat);
   });
