@@ -112,7 +112,7 @@ export const businessNav: NavSection[] = [
         id: "taxes", label: "Taxes", path: "/tax-returns", icon: FileSpreadsheet, module: "tax-returns",
         children: [
           { label: "Tax returns", path: "/tax-returns" },
-          { label: "Schedule C & P&L from statements (AI)", path: "/schedule-c" },
+          { label: "Schedule C & P&L from statements", path: "/schedule-c" },
           { label: "Tax Majr AI", path: "https://taxmajr.ai/", external: true },
         ],
       },
@@ -188,7 +188,7 @@ export const practiceNav: NavSection[] = [
         id: "compliance", label: "Compliance", path: "/tax-returns", icon: CalendarClock, module: "tax-returns",
         children: [
           { label: "Tax returns", path: "/tax-returns" },
-          { label: "Schedule C & P&L from statements (AI)", path: "/schedule-c" },
+          { label: "Schedule C & P&L from statements", path: "/schedule-c" },
           { label: "Deadlines", path: "/deadlines" },
         ],
       },

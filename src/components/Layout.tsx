@@ -582,7 +582,7 @@ const Layout = ({ children }: LayoutProps) => {
       title: "Compliance",
       items: [
         { id: "tax-returns-nav", path: "/tax-returns", label: "Tax Returns", icon: FileSpreadsheet, module: "tax-returns" },
-        { id: "schedule-c-nav", path: "/schedule-c", label: "Schedule C & P&L (AI)", icon: Sparkles, module: "tax-returns" },
+        { id: "schedule-c-nav", path: "/schedule-c", label: "Schedule C & P&L", icon: FileSpreadsheet, module: "tax-returns" },
         { id: "tax-majr-ai-nav", path: "https://taxmajr.ai/", label: "Tax Majr AI", icon: Sparkles, isExternal: true },
         {
           id: "reports-nav",

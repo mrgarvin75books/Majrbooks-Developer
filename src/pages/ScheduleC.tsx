@@ -7,7 +7,6 @@ import Layout from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -49,7 +48,7 @@ interface RecurringSub {
 }
 
 interface ScheduleCResult {
-  /** Always recomputed from `transactions` in exact cents (never taken from the AI). */
+  /** Always recomputed from `transactions` in exact cents. */
   summary: ScheduleCSummary;
   transactions: Transaction[];
   flagged_items: FlaggedItem[];
@@ -58,7 +57,7 @@ interface ScheduleCResult {
   notes?: string;
 }
 
-/** Builds a result from AI output or a saved report, recomputing every total. */
+/** Builds a result from statement lines or a saved report, recomputing every total. */
 function buildResult(raw: Record<string, unknown>): ScheduleCResult {
   const transactions = normalizeTransactions(raw.transactions);
   return {
@@ -77,11 +76,7 @@ const cents$p = (c: number) => formatMoney(c, { parentheses: true });
 interface UploadedFile {
   name: string;
   size: number;
-  content: string;
-  isPdf?: boolean;
-  pdfBase64?: string;
-  /** Excel/CSV lines read in the browser (no AI needed). */
-  lines?: ParsedLine[];
+  lines: ParsedLine[];
 }
 
 /** Reads every sheet and keeps the one with the most recognisable transactions. */
@@ -122,8 +117,6 @@ export default function ScheduleC() {
   const [clientName, setClientName] = useState("");
   const [selectedClientId, setSelectedClientId] = useState<string>("");
   const [clients, setClients] = useState<{ id: string; client_name: string }[]>([]);
-  const [rawText, setRawText] = useState("");
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<ScheduleCResult | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -150,7 +143,7 @@ export default function ScheduleC() {
   }, [user]);
 
   // Opened from a client's page (?client=<id>&year=YYYY): build the P&L from that
-  // client's imported bank transactions. No AI involved.
+  // client's imported bank transactions.
   const [searchParams] = useSearchParams();
   const fromClient = searchParams.get("client");
   const fromYear = Number(searchParams.get("year"));
@@ -378,7 +371,7 @@ export default function ScheduleC() {
         ${row("Total expenses", p.totalExpenses, "t")}
         ${row("Net profit", p.netProfit, "n")}
       </table>
-      <p class="foot">Prepared by MAJR Books from bank statement data categorised with AI. Transfers, personal items and items marked for review are excluded. Review before relying on these figures.</p>
+      <p class="foot">Prepared by MAJR Books from bank statement data. Transfers, personal items and items marked for review are excluded. Review before relying on these figures.</p>
       </body></html>`);
     w.document.close();
     w.print();
@@ -494,7 +487,7 @@ export default function ScheduleC() {
       ${lineRow("31", "Net profit or (loss)", sc.line31NetProfit, true)}
 
       ${otherDetail}
-      <p class="footer">Prepared by MAJR Books from bank statements categorised with AI · ${new Date().toLocaleDateString()}<br/>
+      <p class="footer">Prepared by MAJR Books from bank statements · ${new Date().toLocaleDateString()}<br/>
       Meals are shown at 50%. Transfers, personal items and items marked "needs review" are excluded.<br/>
       Tax mappings are a starting point and must be reviewed by a qualified professional before filing.</p>
       </body></html>
@@ -504,99 +497,47 @@ export default function ScheduleC() {
   }, [result, clientName, isConfirmed, taxYear]);
 
   const processFile = useCallback(async (file: globalThis.File): Promise<UploadedFile | null> => {
-    const maxSize = 15 * 1024 * 1024; // matches the server limit
-    if (file.size > maxSize) {
+    if (file.size > 15 * 1024 * 1024) {
       toast({ title: "File too large", description: `${file.name} is over the 15 MB limit. Split the statement into smaller files.`, variant: "destructive" });
       return null;
     }
-
-    let content = "";
-    let isPdf = false;
-    let pdfBase64 = "";
-    let lines: ParsedLine[] | undefined;
-
-    if (/\.(xlsx|xls|csv)$/i.test(file.name)) {
-      // Spreadsheets are read right here in the browser, no AI needed.
-      try {
-        const wb = XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true, raw: false });
-        lines = readStatementWorkbook(wb);
-        content = wb.SheetNames.map((n) => XLSX.utils.sheet_to_csv(wb.Sheets[n])).join("\n\n");
-      } catch {
-        toast({ title: "Couldn't open the file", description: `${file.name} isn't a readable Excel or CSV file.`, variant: "destructive" });
-        return null;
-      }
-      if (!lines.length) {
-        toast({
-          title: "No transactions found",
-          description: `${file.name}: couldn't find Date and Amount (or Debit/Credit) columns. Check the file has a header row with those column names.`,
-          variant: "destructive",
-        });
-        return null;
-      }
-    } else if (file.type === "text/csv") {
-      content = await file.text();
-    } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
-      // Convert PDF to full base64 for AI vision processing
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      pdfBase64 = btoa(binary);
-      isPdf = true;
-      content = `[PDF file: ${file.name} - will be processed via AI vision]`;
-    } else if (
-      file.name.endsWith(".xlsx") || file.name.endsWith(".xls") ||
-      file.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    ) {
-      // Parse Excel files using xlsx library
-      try {
-        const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(buffer, { type: "array" });
-        const allSheets: string[] = [];
-        for (const sheetName of workbook.SheetNames) {
-          const sheet = workbook.Sheets[sheetName];
-          const csv = XLSX.utils.sheet_to_csv(sheet);
-          allSheets.push(`--- Sheet: ${sheetName} ---\n${csv}`);
-        }
-        content = allSheets.join("\n\n");
-      } catch {
-        content = await file.text();
-        toast({ title: "Note", description: `${file.name}: Could not parse Excel format. For best results, export as CSV.` });
-      }
-    } else {
-      content = await file.text();
+    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) {
+      toast({ title: "Excel or CSV only", description: `${file.name}: download the statement from the bank as Excel (.xlsx) or CSV.`, variant: "destructive" });
+      return null;
     }
-
-    return { name: file.name, size: file.size, content, isPdf, pdfBase64, lines };
+    let lines: ParsedLine[];
+    try {
+      lines = readStatementWorkbook(XLSX.read(await file.arrayBuffer(), { type: "array", cellDates: true, raw: false }));
+    } catch {
+      toast({ title: "Couldn't open the file", description: `${file.name} isn't a readable Excel or CSV file.`, variant: "destructive" });
+      return null;
+    }
+    if (!lines.length) {
+      toast({
+        title: "No transactions found",
+        description: `${file.name}: couldn't find Date and Amount (or Debit/Credit) columns. Check the file has a header row with those column names.`,
+        variant: "destructive",
+      });
+      return null;
+    }
+    return { name: file.name, size: file.size, lines };
   }, []);
 
   const addFiles = useCallback(async (files: FileList | globalThis.File[]) => {
-    const fileArray = Array.from(files);
     const processed: UploadedFile[] = [];
-    for (const f of fileArray) {
-      const result = await processFile(f);
-      if (result) processed.push(result);
+    for (const f of Array.from(files)) {
+      const r = await processFile(f);
+      if (r) processed.push(r);
     }
     if (processed.length > 0) {
-      setUploadedFiles(prev => [...prev, ...processed]);
-      const combined = [...uploadedFiles, ...processed].map(f => f.content).join("\n\n---NEW FILE---\n\n");
-      setRawText(combined);
-      toast({ title: "Files loaded", description: `${processed.length} file(s) ready for analysis.` });
+      setUploadedFiles((prev) => [...prev, ...processed]);
+      const n = processed.reduce((s, f) => s + f.lines.length, 0);
+      toast({ title: "Files loaded", description: `${n} transactions found in ${processed.length} file(s).` });
     }
-  }, [uploadedFiles, processFile]);
+  }, [processFile]);
 
   const removeFile = useCallback((index: number) => {
-    setUploadedFiles(prev => {
-      const updated = prev.filter((_, i) => i !== index);
-      if (updated.length > 0) {
-        setRawText(updated.map(f => f.content).join("\n\n---NEW FILE---\n\n"));
-      } else {
-        setRawText("");
-      }
-      return updated;
-    });
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -622,86 +563,27 @@ export default function ScheduleC() {
     const files = e.dataTransfer.files;
     if (files.length > 0) await addFiles(files);
   }, [addFiles]);
-  const analyze = useCallback(async () => {
-    const hasTextContent = rawText.trim() && !rawText.trim().startsWith("[PDF file:");
-    const hasPdfFiles = uploadedFiles.some(f => f.isPdf && f.pdfBase64);
-    
-    if (!hasTextContent && !hasPdfFiles) {
-      toast({ title: "No data", description: "Please upload a file or paste transaction data.", variant: "destructive" });
+
+  /** Sorts every transaction with the built-in rules and builds the P&L / Schedule C. */
+  const buildReport = useCallback(() => {
+    const all = uploadedFiles.flatMap((f) => f.lines).sort((a, b) => a.date.localeCompare(b.date));
+    if (!all.length) {
+      toast({ title: "No data", description: "Upload an Excel or CSV bank statement first.", variant: "destructive" });
       return;
     }
     setIsConfirmed(false);
     setSavedReportId(null);
-
-    // Only Excel/CSV files: categorize with rules in the browser, no AI call.
-    if (uploadedFiles.length > 0 && uploadedFiles.every((f) => f.lines?.length)) {
-      const all = uploadedFiles.flatMap((f) => f.lines!).sort((a, b) => a.date.localeCompare(b.date));
-      const built = buildResult({
-        transactions: all.map((l) => ({ date: l.date, description: l.description, amount: l.cents / 100, ...categorize(l.description, l.direction) })),
-        statement_period: { start: all[0].date, end: all[all.length - 1].date },
-        notes: "Read from your spreadsheet and sorted with built-in rules. Check anything marked Needs review.",
-      });
-      setResult(built);
-      const endYear = Number(built.statement_period!.end.slice(0, 4));
-      if (endYear > 1990 && endYear < 2100) setTaxYear(endYear);
-      const review = built.summary.excluded.needsReviewCount;
-      toast({ title: "Done", description: `${all.length} transactions read${review ? ` · ${review} need your review` : ""}.` });
-      return;
-    }
-
-    setIsAnalyzing(true);
-    try {
-      // Collect text content (non-PDF)
-      const textParts = uploadedFiles
-        .filter(f => !f.isPdf)
-        .map(f => f.content);
-      
-      // If user typed in the textarea and no files uploaded, use that
-      if (uploadedFiles.length === 0 && rawText.trim()) {
-        textParts.push(rawText);
-      }
-
-      // Collect PDF base64 data
-      const pdfFiles = uploadedFiles
-        .filter(f => f.isPdf && f.pdfBase64)
-        .map(f => ({ name: f.name, base64: f.pdfBase64! }));
-
-      const { data, error } = await supabase.functions.invoke("schedule-c-analyze", {
-        body: { 
-          transactions_text: textParts.join("\n\n---NEW FILE---\n\n"), 
-          client_name: clientName,
-          pdf_files: pdfFiles,
-        },
-      });
-      if (error) {
-        // Show the server's plain-language message when there is one
-        const detail = await (error as { context?: Response }).context?.json?.().catch(() => null);
-        throw new Error(detail?.error || error.message);
-      }
-      if (data?.error) throw new Error(data.error);
-      const built = buildResult(data as Record<string, unknown>);
-      setResult(built);
-      const endYear = Number(String(built.statement_period?.end ?? "").slice(0, 4));
-      if (endYear > 1990 && endYear < 2100) setTaxYear(endYear);
-      const review = built.summary.excluded.needsReviewCount;
-      toast({
-        title: "Analysis complete",
-        description: `${built.transactions.length} transactions categorized${review ? ` · ${review} need your review` : ""}.`,
-      });
-    } catch (err: any) {
-      const msg = String(err?.message || "");
-      toast({
-        title: "Analysis failed",
-        description: /not found|404|Failed to send a request/i.test(msg)
-          ? "The AI service isn't installed on the server yet. It needs to be deployed before analysis can run."
-          : msg || "Unknown error",
-        variant: "destructive",
-      });
-    } finally {
-      setIsAnalyzing(false);
-    }
-  }, [rawText, clientName, uploadedFiles]);
-  const spreadsheetOnly = uploadedFiles.length > 0 && uploadedFiles.every((f) => f.lines?.length);
+    const built = buildResult({
+      transactions: all.map((l) => ({ date: l.date, description: l.description, amount: l.cents / 100, ...categorize(l.description, l.direction) })),
+      statement_period: { start: all[0].date, end: all[all.length - 1].date },
+      notes: "",
+    });
+    setResult(built);
+    const endYear = Number(all[all.length - 1].date.slice(0, 4));
+    if (endYear > 1990 && endYear < 2100) setTaxYear(endYear);
+    const review = built.summary.excluded.needsReviewCount;
+    toast({ title: "Done", description: `${all.length} transactions sorted${review ? ` · ${review} need your review` : ""}.` });
+  }, [uploadedFiles]);
 
   return (
     <Layout>
@@ -710,7 +592,7 @@ export default function ScheduleC() {
           <div>
             <h1 className="text-3xl font-bold">Schedule C &amp; P&amp;L from Bank Statements</h1>
             <p className="text-muted-foreground mt-1">
-              Upload bank statements and AI sorts every transaction; MAJR Books then builds the Profit &amp; Loss and Schedule C
+              Upload Excel or CSV bank statements; MAJR Books sorts every transaction and builds the Profit &amp; Loss and Schedule C
             </p>
           </div>
           <Button
@@ -853,7 +735,7 @@ export default function ScheduleC() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".csv,.txt,.pdf,.xlsx,.xls"
+                accept=".csv,.xlsx,.xls"
                 multiple
                 onChange={handleFileUpload}
                 className="hidden"
@@ -863,7 +745,7 @@ export default function ScheduleC() {
                 Drag & drop files here, or click to browse
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                Bank statements as PDF, CSV, Excel or text • Up to 5 PDFs at a time • Max 15 MB each
+                Bank statements as Excel (.xlsx, .xls) or CSV • Max 15 MB each
               </p>
             </div>
 
@@ -893,32 +775,9 @@ export default function ScheduleC() {
               </div>
             )}
 
-            <div>
-              <label className="text-sm font-medium mb-1.5 block">
-                Or paste transaction data directly
-              </label>
-              <Textarea
-                rows={6}
-                placeholder={"Date, Description, Amount\n01/15/2025, AMAZON PURCHASE, -49.99\n01/16/2025, CLIENT PAYMENT DEPOSIT, 2500.00\n..."}
-                value={rawText}
-                onChange={(e) => {
-                  setRawText(e.target.value);
-                  if (uploadedFiles.length > 0) setUploadedFiles([]);
-                }}
-              />
-            </div>
-            <Button onClick={analyze} disabled={isAnalyzing} className="w-full md:w-auto">
-              {isAnalyzing ? (
-                <>
-                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                  Analyzing...
-                </>
-              ) : (
-                <>
-                  <ClipboardList className="h-4 w-4 mr-2" />
-                  {spreadsheetOnly ? "Build P&L and Schedule C" : "Analyze & Categorize"}
-                </>
-              )}
+            <Button onClick={buildReport} disabled={uploadedFiles.length === 0} className="w-full md:w-auto">
+              <ClipboardList className="h-4 w-4 mr-2" />
+              Build P&amp;L and Schedule C
             </Button>
           </CardContent>
         </Card>
@@ -1004,7 +863,7 @@ export default function ScheduleC() {
                       </span>
                     </p>
                   )}
-                  {result.notes && <p className="text-muted-foreground">AI note: {result.notes}</p>}
+                  {result.notes && <p className="text-muted-foreground">{result.notes}</p>}
                 </CardContent>
               </Card>
             )}

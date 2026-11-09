@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import fc from "fast-check";
-import { readFileSync } from "node:fs";
 import { ALL_CATEGORY_NAMES, CATEGORIES, categoryFor, computeSummary, normalizeTransactions, type ScheduleCTransaction } from "./scheduleC";
 
 const tx = (p: Partial<ScheduleCTransaction>): ScheduleCTransaction => ({
@@ -74,13 +73,6 @@ describe("computeSummary", () => {
 });
 
 describe("categories and normalisation", () => {
-  it("the AI function offers exactly the app's categories", () => {
-    const src = readFileSync("supabase/functions/schedule-c-analyze/index.ts", "utf8");
-    const block = /CATEGORY_NAMES = \[([\s\S]*?)\];/.exec(src)?.[1] ?? "";
-    const fromFunction = [...block.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(fromFunction).toEqual(ALL_CATEGORY_NAMES);
-  });
-
   it("maps older category names to form lines", () => {
     expect(categoryFor("Taxes & Licenses")?.line).toBe("23");
     expect(categoryFor("Software / Subscriptions")?.line).toBe("27a");
