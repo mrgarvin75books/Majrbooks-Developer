@@ -20,6 +20,24 @@ export interface ColumnMapping {
   debit: number | null;
   /** Money in (deposits / credits). */
   credit: number | null;
+  /**
+   * Optional bookkeeper columns from a workbook that is already categorised
+   * (e.g. "Sch C Line", "Schedule C Treatment", "Part V Detail",
+   * "Include on Sch C? (Y/N)"). When present, they set each line's category
+   * instead of the built-in rules. See sheetCategories.ts.
+   */
+  category?: number | null;
+  treatment?: number | null;
+  detail?: number | null;
+  include?: number | null;
+}
+
+/** Raw category text read from the sheet's bookkeeper columns. */
+export interface SheetCategoryCells {
+  category?: string;
+  treatment?: string;
+  detail?: string;
+  include?: string;
 }
 
 /** How a single amount column is signed. Most banks: negative = money out. */
@@ -32,12 +50,16 @@ export interface ParsedLine {
   description: string;
   cents: Cents; // always > 0
   direction: "in" | "out";
+  /** Category cells from the sheet, when the mapping names category columns. */
+  sheet?: SheetCategoryCells;
 }
 
 export interface ParseResult {
   lines: ParsedLine[];
   errors: { row: number; reason: string }[];
   skipped: number;
+  /** Rows with a date but a $0.00 amount (left out; also counted in `skipped`). */
+  zeroAmount?: number;
 }
 
 const norm = (v: Cell) => String(v ?? "").trim().toLowerCase();
@@ -75,7 +97,22 @@ export function detectColumns(header: Cell[]): ColumnMapping {
   const amount = debit !== null && credit !== null ? null : find(HEADER_PATTERNS.amount, [date ?? -1]);
   const used = [date ?? -1, amount ?? -1, debit ?? -1, credit ?? -1];
   const description = find(HEADER_PATTERNS.descriptionStrong, used) ?? find(HEADER_PATTERNS.description, used);
-  return { date, description, amount, debit: amount === null ? debit : null, credit: amount === null ? credit : null };
+  // Bookkeeper category columns. Only clearly Schedule C columns count: a
+  // loose "Spending Category" (e.g. "Children & Family") isn't a tax category.
+  const taken = [...used, description ?? -1];
+  const category =
+    find(/^sch(edule)?\.?\s*c\s*line( ?#| no\.?| number)?$/, taken) ??
+    find(/^(sch(edule)?\.?\s*c|tax)\s*(category|line description)$|^schedule c category$|^category$|^category\s*\(\s*sch(edule)?\.?\s*c\s*\)$/, taken);
+  const treatment = find(/^sch(edule)?\.?\s*c\s*treatment$|^treatment$/, [...taken, category ?? -1]);
+  const detail = find(/^part v detail|^other expense (type|detail)/, [...taken, category ?? -1, treatment ?? -1]);
+  const include = find(/^include on sch(edule)?\.?\s*c/, [...taken, category ?? -1, treatment ?? -1, detail ?? -1]);
+
+  return {
+    date, description, amount,
+    debit: amount === null ? debit : null,
+    credit: amount === null ? credit : null,
+    category, treatment, detail, include,
+  };
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -172,6 +209,7 @@ export function parseLines(
   const lines: ParsedLine[] = [];
   const errors: ParseResult["errors"] = [];
   let skipped = 0;
+  let zeroAmount = 0;
 
   for (let i = headerRow + 1; i < rows.length; i++) {
     const r = rows[i] ?? [];
@@ -181,8 +219,10 @@ export function parseLines(
 
     let cents: number | null = null;
     let direction: "in" | "out" | null = null;
+    let zero = false; // a $0.00 line: nothing to import
     if (map.amount !== null) {
       const v = parseAmountCell(r[map.amount]);
+      if (v === 0) zero = true;
       if (v !== null && v !== 0) {
         const out = sign === "negative_is_out" ? v < 0 : v > 0;
         cents = Math.abs(v);
@@ -194,12 +234,13 @@ export function parseLines(
       if (out && Math.abs(out) > 0 && !(inn && Math.abs(inn) > 0)) { cents = Math.abs(out); direction = "out"; }
       else if (inn && Math.abs(inn) > 0 && !(out && Math.abs(out) > 0)) { cents = Math.abs(inn); direction = "in"; }
       else if (inn && out) { errors.push({ row: rowNo, reason: "has both a debit and a credit" }); continue; }
+      else if (out === 0 || inn === 0) zero = true;
     }
 
     const emptyRow = r.every((c) => c === null || c === undefined || String(c).trim() === "");
     if (emptyRow) { skipped++; continue; }
     // Opening/closing balance and total rows have no usable date or amount.
-    if (/^(opening|closing|beginning|ending)?\s*balance|^total/i.test(desc) && (cents === null || rawDate === null || rawDate === "")) {
+    if (/^(opening|closing|beginning|ending)?\s*balance|^total|^(transaction )?count\b|^reconcil|^difference\b/i.test(desc) &&(cents === null || rawDate === null || rawDate === "")) {
       skipped++;
       continue;
     }
@@ -208,11 +249,41 @@ export function parseLines(
     // Rows with neither an amount nor a description carry nothing to import.
     if ((!date || !desc) && cents === null) { skipped++; continue; }
     if (!date) { errors.push({ row: rowNo, reason: `date "${String(rawDate ?? "")}" not recognised` }); continue; }
+    if ((cents === null || direction === null) && zero) { skipped++; zeroAmount++; continue; }
     if (cents === null || direction === null) { errors.push({ row: rowNo, reason: "no amount" }); continue; }
 
-    lines.push({ row: rowNo, date, description: desc.slice(0, 500) || "(no description)", cents, direction });
+    const line: ParsedLine = { row: rowNo, date, description: desc.slice(0, 500) || "(no description)", cents, direction };
+    const cell = (i: number | null | undefined) => (i === null || i === undefined ? undefined : String(r[i] ?? "").trim() || undefined);
+    const sheet: SheetCategoryCells = { category: cell(map.category), treatment: cell(map.treatment), detail: cell(map.detail), include: cell(map.include) };
+    if (Object.values(sheet).some((v) => v !== undefined)) line.sheet = sheet;
+    lines.push(line);
   }
-  return { lines, errors, skipped };
+  return { lines, errors, skipped, zeroAmount };
+}
+
+/**
+ * Workbooks often hold summaries (P&L, totals by month) next to the actual
+ * transaction list. Picks the sheet that reads as the most transactions with
+ * the automatic header / column detection; on a tie, the one that already
+ * carries Schedule C categories, then fewer unreadable rows, then the
+ * earlier sheet. Returns null when no sheet yields
+ * any transaction.
+ */
+export function pickTransactionSheet(sheets: { name: string; rows: Cell[][] }[]): { name: string; count: number } | null {
+  let best: { name: string; count: number; categorised: number; errors: number } | null = null;
+  for (const { name, rows } of sheets) {
+    if (!rows.length) continue;
+    const h = findHeaderRow(rows);
+    const { lines, errors } = parseLines(rows, h, detectColumns(rows[h] ?? []));
+    if (!lines.length) continue;
+    const categorised = lines.filter((l) => l.sheet).length;
+    const better = !best
+      || lines.length > best.count
+      || (lines.length === best.count && categorised > best.categorised)
+      || (lines.length === best.count && categorised === best.categorised && errors.length < best.errors);
+    if (better) best = { name, count: lines.length, categorised, errors: errors.length };
+  }
+  return best && { name: best.name, count: best.count };
 }
 
 const normDesc = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();

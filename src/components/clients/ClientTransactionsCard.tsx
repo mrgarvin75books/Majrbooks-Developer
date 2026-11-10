@@ -120,7 +120,7 @@ export function ClientTransactionsCard({ clientId, clientName }: Props) {
   };
 
   const summary = useMemo(() => computeSummary(lines.map((l) => ({
-    date: l.txn_date, description: l.description, amount: Number(l.amount), category: l.category, type: l.type, notes: l.notes,
+    date: l.txn_date, description: l.description, amount: Number(l.amount), direction: l.direction, category: l.category, type: l.type, notes: l.notes,
   }))), [lines]);
   const visible = filter === "needs_review" ? lines.filter((l) => l.type === "needs_review") : lines;
 
@@ -172,7 +172,7 @@ export function ClientTransactionsCard({ clientId, clientName }: Props) {
             <CardDescription>Imported from this client's bank statements. Kept separate from your firm's own books.</CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setImportOpen(true)} disabled={!!notReady}><Upload className="h-4 w-4 mr-2" /> Import Excel / CSV</Button>
+            <Button onClick={() => setImportOpen(true)} disabled={!!notReady}><Upload className="h-4 w-4 mr-2" /> Import statement (PDF, Excel, CSV)</Button>
             {lines.length > 0 && (
               <Button variant="outline" onClick={() => navigate(`/schedule-c?client=${clientId}&year=${activeYear}`)}>
                 <FileSpreadsheet className="h-4 w-4 mr-2" /> P&amp;L and Schedule C

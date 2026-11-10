@@ -153,10 +153,10 @@ export default function ScheduleC() {
     let cancelled = false;
     (async () => {
       const { data: c } = await supabase.from("clients").select("client_name").eq("id", fromClient).maybeSingle();
-      const rows: { txn_date: string; description: string; amount: number; type: string; category: string; notes: string }[] = [];
+      const rows: { txn_date: string; description: string; amount: number; direction: string; type: string; category: string; notes: string }[] = [];
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase.from("client_statement_transactions")
-          .select("txn_date, description, amount, type, category, notes")
+          .select("txn_date, description, amount, direction, type, category, notes")
           .eq("client_id", fromClient)
           .gte("txn_date", `${year}-01-01`).lte("txn_date", `${year}-12-31`)
           .order("txn_date").order("id").range(from, from + 999);
@@ -174,7 +174,7 @@ export default function ScheduleC() {
       setSavedReportId(null);
       setIsConfirmed(false);
       setResult(buildResult({
-        transactions: rows.map((r) => ({ date: r.txn_date, description: r.description, amount: Number(r.amount), type: r.type, category: r.category, notes: r.notes })),
+        transactions: rows.map((r) => ({ date: r.txn_date, description: r.description, amount: Number(r.amount), direction: r.direction, type: r.type, category: r.category, notes: r.notes })),
         statement_period: rows.length ? { start: rows[0].txn_date, end: rows[rows.length - 1].txn_date } : null,
         notes: `Built from ${rows.length} imported bank transaction${rows.length === 1 ? "" : "s"}. Change categories on the client's page.`,
       }));

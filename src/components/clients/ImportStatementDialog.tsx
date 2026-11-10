@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import * as XLSX from "xlsx";
-import { AlertTriangle, CheckCircle2, FileSpreadsheet, Loader2, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, FileSpreadsheet, FileText, Loader2, Upload } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -11,10 +11,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { supabase } from "@/integrations/supabase/client";
 import { formatMoney } from "@/lib/money";
 import {
-  detectColumns, findHeaderRow, fingerprints, parseLines,
+  detectColumns, findHeaderRow, fingerprints, parseLines, pickTransactionSheet,
   type Cell, type ColumnMapping, type SignConvention,
 } from "@/lib/statementImport";
 import { categorize } from "@/lib/categorizeRules";
+import { sheetCategory } from "@/lib/sheetCategories";
+import { extractPdfPages, parsePdfStatement, PdfReadError, type PdfPage } from "@/lib/pdfStatement";
 
 interface Props {
   open: boolean;
@@ -28,17 +30,22 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_ROWS = 20_000;
 const NONE = "__none__";
 
-type Summary = { added: number; duplicates: number; errors: number };
+type Summary = { added: number; duplicates: number; updated: number; errors: number };
 
 /**
- * Imports a client's bank statement from Excel or CSV — no AI. Columns are
- * detected automatically and can be corrected; lines are categorised by
+ * Imports a client's bank statement from Excel, CSV or PDF — no AI. For
+ * spreadsheets, columns are detected automatically and can be corrected; PDFs
+ * are read from their text (see pdfStatement.ts). Lines are categorised by
  * rules; lines already imported are skipped.
  */
 export function ImportStatementDialog({ open, onOpenChange, clientId, clientName, onImported }: Props) {
   const [fileName, setFileName] = useState("");
   const [workbook, setWorkbook] = useState<XLSX.WorkBook | null>(null);
+  const [pdfPages, setPdfPages] = useState<PdfPage[] | null>(null);
+  const [reading, setReading] = useState(false);
   const [sheet, setSheet] = useState("");
+  /** Sheet chosen automatically because it holds the transactions (shown to the user). */
+  const [autoSheet, setAutoSheet] = useState<string | null>(null);
   const [rows, setRows] = useState<Cell[][]>([]);
   const [headerRow, setHeaderRow] = useState(0);
   const [mapping, setMapping] = useState<ColumnMapping>({ date: null, description: null, amount: null, debit: null, credit: null });
@@ -48,7 +55,7 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
   const [done, setDone] = useState<Summary | null>(null);
 
   const reset = () => {
-    setFileName(""); setWorkbook(null); setSheet(""); setRows([]); setHeaderRow(0);
+    setFileName(""); setWorkbook(null); setPdfPages(null); setReading(false); setSheet(""); setAutoSheet(null); setRows([]); setHeaderRow(0);
     setMapping({ date: null, description: null, amount: null, debit: null, credit: null });
     setSign("negative_is_out"); setError(null); setDone(null); setSaving(false);
   };
@@ -69,34 +76,63 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
   const onFile = async (file: File | undefined) => {
     reset();
     if (!file) return;
-    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) { setError("Choose an Excel (.xlsx, .xls) or CSV file."); return; }
+    if (!/\.(xlsx|xls|csv|pdf)$/i.test(file.name)) { setError("Choose a PDF, Excel (.xlsx, .xls) or CSV file."); return; }
     if (file.size > MAX_FILE_BYTES) { setError("That file is larger than 10 MB. Split it into smaller periods."); return; }
+    if (/\.pdf$/i.test(file.name)) {
+      setReading(true);
+      try {
+        const pages = await extractPdfPages(await file.arrayBuffer());
+        setFileName(file.name);
+        setPdfPages(pages);
+      } catch (e) {
+        setError(e instanceof PdfReadError ? e.message : "This PDF couldn't be read. Try downloading the statement from the bank again, or use CSV / Excel.");
+      } finally {
+        setReading(false);
+      }
+      return;
+    }
     try {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array", cellDates: true, raw: false });
       if (!wb.SheetNames.length) { setError("This file has no sheets."); return; }
       setFileName(file.name);
       setWorkbook(wb);
-      loadSheet(wb, wb.SheetNames[0]);
+      // Open the sheet with the transaction list, not a summary tab that happens to come first.
+      const sheets = wb.SheetNames.map((name) => ({
+        name,
+        rows: XLSX.utils.sheet_to_json<Cell[]>(wb.Sheets[name], { header: 1, raw: true, defval: null, blankrows: false }).slice(0, MAX_ROWS + 1),
+      }));
+      const best = pickTransactionSheet(sheets);
+      setAutoSheet(best && wb.SheetNames.length > 1 ? best.name : null);
+      loadSheet(wb, best?.name ?? wb.SheetNames[0]);
     } catch {
       setError("This file couldn't be read. If it's from your bank, try downloading it again as CSV or Excel.");
     }
   };
 
-  const parsed = useMemo(() => (rows.length ? parseLines(rows, headerRow, mapping, sign) : null), [rows, headerRow, mapping, sign]);
+  const pdfResult = useMemo(() => (pdfPages ? parsePdfStatement(pdfPages, sign) : null), [pdfPages, sign]);
+  const parsed = useMemo(
+    () => pdfResult ?? (rows.length ? parseLines(rows, headerRow, mapping, sign) : null),
+    [pdfResult, rows, headerRow, mapping, sign],
+  );
   const prepared = useMemo(() => {
     if (!parsed) return [];
     const keys = fingerprints(parsed.lines);
-    return parsed.lines.map((l, i) => ({ ...l, ...categorize(l.description, l.direction), fingerprint: keys[i] }));
+    return parsed.lines.map((l, i) => {
+      // The workbook's own Schedule C category wins; the built-in rules fill the gaps.
+      const fromSheet = sheetCategory(l.sheet);
+      return { ...l, ...(fromSheet ?? categorize(l.description, l.direction)), fromSheet: !!fromSheet, fingerprint: keys[i] };
+    });
   }, [parsed]);
 
   const header = rows[headerRow] ?? [];
   const colOptions = header.map((h, i) => ({ value: String(i), label: `${String.fromCharCode(65 + (i % 26))}${i >= 26 ? Math.floor(i / 26) : ""}: ${String(h ?? "").slice(0, 30) || "(blank)"}` }));
   const singleAmount = mapping.amount !== null;
-  const mappingOk = mapping.date !== null && (mapping.amount !== null || mapping.debit !== null || mapping.credit !== null);
+  const mappingOk = !!pdfResult || mapping.date !== null && (mapping.amount !== null || mapping.debit !== null || mapping.credit !== null);
   const period = prepared.length ? { start: prepared.reduce((a, l) => (l.date < a ? l.date : a), prepared[0].date), end: prepared.reduce((a, l) => (l.date > a ? l.date : a), prepared[0].date) } : null;
   const totals = prepared.reduce((t, l) => (l.direction === "in" ? { ...t, in: t.in + l.cents } : { ...t, out: t.out + l.cents }), { in: 0, out: 0 });
   const review = prepared.filter((l) => l.type === "needs_review").length;
+  const fromSheetCount = prepared.filter((l) => l.fromSheet).length;
 
   const setCol = (key: keyof ColumnMapping) => (v: string) => setMapping((m) => ({ ...m, [key]: v === NONE ? null : Number(v) }));
 
@@ -107,7 +143,7 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
     try {
       const { data: batch, error: batchErr } = await supabase
         .from("client_statement_imports")
-        .insert({ client_id: clientId, file_name: fileName.slice(0, 255), sheet_name: sheet, row_count: prepared.length, period_start: period?.start ?? null, period_end: period?.end ?? null })
+        .insert({ client_id: clientId, file_name: fileName.slice(0, 255), sheet_name: pdfResult ? "PDF" : sheet, row_count: prepared.length, period_start: period?.start ?? null, period_end: period?.end ?? null })
         .select("id")
         .single();
       if (batchErr) throw batchErr;
@@ -144,7 +180,27 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
         .update({ imported_count: fresh.length, duplicate_count: prepared.length - fresh.length })
         .eq("id", batch.id);
 
-      setDone({ added: fresh.length, duplicates: prepared.length - fresh.length, errors: parsed?.errors.length ?? 0 });
+      // Lines saved earlier (e.g. from the uncategorised tab of the same workbook)
+      // take the workbook's categories when this sheet has them.
+      const recat = new Map<string, { patch: { type: string; category: string; notes: string }; keys: string[] }>();
+      for (const l of prepared) {
+        if (!l.fromSheet || !existing.has(l.fingerprint)) continue;
+        const patch = { type: l.type, category: l.category, notes: l.notes };
+        const k = JSON.stringify(patch);
+        if (!recat.has(k)) recat.set(k, { patch, keys: [] });
+        recat.get(k)!.keys.push(l.fingerprint);
+      }
+      let updated = 0;
+      for (const { patch, keys: ks } of recat.values()) {
+        for (let i = 0; i < ks.length; i += 200) {
+          const { error: e } = await supabase.from("client_statement_transactions").update(patch)
+            .eq("client_id", clientId).in("fingerprint", ks.slice(i, i + 200));
+          if (e) throw e;
+          updated += ks.slice(i, i + 200).length;
+        }
+      }
+
+      setDone({ added: fresh.length, duplicates: prepared.length - fresh.length, updated, errors: parsed?.errors.length ?? 0 });
       onImported();
     } catch (e) {
       const msg = (e as { message?: string })?.message ?? "Import failed";
@@ -162,7 +218,7 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
         <DialogHeader>
           <DialogTitle>Import bank statement for {clientName}</DialogTitle>
           <DialogDescription>
-            Upload the statement as Excel or CSV (download it from the bank's website). Lines already imported are skipped automatically.
+            Upload the statement as a PDF, Excel or CSV file downloaded from the bank's website. Lines already imported are skipped automatically.
           </DialogDescription>
         </DialogHeader>
 
@@ -171,7 +227,12 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
             <div className="flex items-center gap-2 text-lg font-medium"><CheckCircle2 className="h-6 w-6 text-green-600" /> Import complete</div>
             <ul className="text-sm space-y-1">
               <li><strong>{done.added}</strong> new transaction{done.added === 1 ? "" : "s"} added</li>
-              {done.duplicates > 0 && <li><strong>{done.duplicates}</strong> already imported before, skipped</li>}
+              {done.duplicates > 0 && (
+                <li>
+                  <strong>{done.duplicates}</strong> already imported before, not added again
+                  {done.updated > 0 && <> ({done.updated} of them updated to the workbook's categories)</>}
+                </li>
+              )}
               {done.errors > 0 && <li className="text-destructive"><strong>{done.errors}</strong> row{done.errors === 1 ? "" : "s"} couldn't be read and were left out</li>}
             </ul>
             <div className="flex gap-2">
@@ -183,16 +244,60 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
           <div className="space-y-5">
             <label className="flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 cursor-pointer hover:bg-muted/40">
               <Upload className="h-8 w-8 text-muted-foreground" />
-              <span className="text-sm font-medium">{fileName || "Click to choose an Excel or CSV file"}</span>
-              <span className="text-xs text-muted-foreground">.xlsx, .xls or .csv · up to 10 MB</span>
-              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
+              <span className="text-sm font-medium">{reading ? "Reading PDF…" : fileName || "Click to choose a PDF, Excel or CSV file"}</span>
+              <span className="text-xs text-muted-foreground">.pdf, .xlsx, .xls or .csv · up to 10 MB</span>
+              <input type="file" accept=".pdf,.xlsx,.xls,.csv" disabled={reading}className="hidden" onChange={(e) => { onFile(e.target.files?.[0]); e.target.value = ""; }} />
             </label>
 
             {error && <Alert variant="destructive"><AlertTriangle className="h-4 w-4" /><AlertDescription>{error}</AlertDescription></Alert>}
 
-            {workbook && rows.length > 0 && (
+            {pdfResult && (
+              <div className="space-y-3">
+                {pdfResult.lines.length === 0 ? (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      No transactions were found in this PDF. Its layout may not be one we can read. Download the statement as CSV or Excel from the bank's website and import that instead.
+                    </AlertDescription>
+                  </Alert>
+                ) : (
+                  <Alert>
+                    <FileText className="h-4 w-4" />
+                    <AlertDescription>
+                      Read from the PDF's text. Compare the totals below with the statement before importing.
+                      {pdfResult.statementTotals.in !== null && (
+                        <> Statement deposits: <strong>{formatMoney(pdfResult.statementTotals.in)}</strong>{pdfResult.statementTotals.in === totals.in ? " ✓ matches" : ` (found ${formatMoney(totals.in)})`}.</>
+                      )}
+                      {pdfResult.statementTotals.out !== null && (
+                        <> Statement withdrawals: <strong>{formatMoney(pdfResult.statementTotals.out)}</strong>{pdfResult.statementTotals.out === totals.out ? " ✓ matches" : ` (found ${formatMoney(totals.out)})`}.</>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                {pdfResult.yearGuessed && pdfResult.lines.length > 0 && (
+                  <Alert variant="destructive">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>The statement doesn't show a year, so {new Date().getFullYear()} was assumed. Check the dates below.</AlertDescription>
+                  </Alert>
+                )}
+                {pdfResult.signBased > 0 && (
+                  <div className="space-y-1 max-w-sm">
+                    <Label>Money going out is shown as</Label>
+                    <Select value={sign} onValueChange={(v) => setSign(v as SignConvention)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="negative_is_out">Negative numbers (most bank statements)</SelectItem>
+                        <SelectItem value="positive_is_out">Positive numbers (most credit card statements)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {((workbook && rows.length > 0) || (pdfResult && pdfResult.lines.length > 0)) && (
               <>
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {workbook && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {workbook.SheetNames.length > 1 && (
                     <div className="space-y-1">
                       <Label>Sheet</Label>
@@ -271,7 +376,35 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
                       </div>
                     ))
                   )}
-                </div>
+                  {([
+                    ["category", "Schedule C line / category column (optional)"],
+                    ["treatment", "Treatment column (optional)"],
+                  ] as const).map(([k, label]) => (
+                    <div key={k} className="space-y-1">
+                      <Label>{label}</Label>
+                      <Select value={mapping[k] == null ? NONE : String(mapping[k])} onValueChange={setCol(k)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={NONE}>(none: use built-in rules)</SelectItem>
+                          {colOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>}
+
+                {workbook && autoSheet && sheet === autoSheet && sheet !== workbook.SheetNames[0] && (
+                  <p className="text-sm text-muted-foreground">
+                    Opened the "{autoSheet}" sheet because it holds the transaction list. Other sheets can be chosen above.
+                  </p>
+                )}
+                {workbook && mappingOk && prepared.length === 0 && (
+                  <Alert>
+                    <AlertDescription>
+                      No transactions found on this sheet. Choose the sheet that lists one transaction per row (with a date and an amount), not a summary or P&amp;L.
+                    </AlertDescription>
+                  </Alert>
+                )}
 
                 {!mappingOk ? (
                   <Alert><AlertDescription>Choose the date column and the amount column(s) to see the preview.</AlertDescription></Alert>
@@ -282,15 +415,21 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
                       {period && <Badge variant="outline">{period.start} to {period.end}</Badge>}
                       <Badge variant="outline">In {formatMoney(totals.in)}</Badge>
                       <Badge variant="outline">Out {formatMoney(totals.out)}</Badge>
+                      {fromSheetCount > 0 && <Badge variant="outline" className="border-green-600 text-green-700">{fromSheetCount} categorised from the sheet</Badge>}
                       {review > 0 && <Badge variant="outline" className="border-yellow-500 text-yellow-700">{review} to review after import</Badge>}
                     </div>
 
+                    {parsed && (parsed.zeroAmount ?? 0) > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {parsed.zeroAmount} line{parsed.zeroAmount === 1 ? "" : "s"} with a $0.00 amount left out (nothing to record).
+                      </p>
+                    )}
                     {parsed && parsed.errors.length > 0 && (
                       <Alert variant="destructive">
                         <AlertTriangle className="h-4 w-4" />
                         <AlertDescription>
                           {parsed.errors.length} row{parsed.errors.length === 1 ? "" : "s"} can't be read and will be left out:{" "}
-                          {parsed.errors.slice(0, 5).map((e) => `row ${e.row} (${e.reason})`).join("; ")}{parsed.errors.length > 5 ? "…" : ""}
+                          {parsed.errors.slice(0, 5).map((e) => (e.row > 0 ? `row ${e.row} (${e.reason})` : e.reason)).join("; ")}{parsed.errors.length > 5 ? "…" : ""}
                         </AlertDescription>
                       </Alert>
                     )}
@@ -321,7 +460,7 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
                     </div>
                     {prepared.length > 50 && <p className="text-xs text-muted-foreground">Showing the first 50 of {prepared.length}.</p>}
                     <p className="text-xs text-muted-foreground">
-                      Check a few lines: money in should be deposits and money out should be payments. If they're the wrong way round, change "Money going out is shown as".
+                      Check a few lines: money in should be deposits and money out should be payments. If they're the wrong way round{pdfResult && pdfResult.signBased === 0 ? ", the PDF layout may not be one we can read; use CSV or Excel instead" : ', change "Money going out is shown as"'}.
                     </p>
 
                     <div className="flex justify-end gap-2">

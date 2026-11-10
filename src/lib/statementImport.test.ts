@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import {
-  detectColumns, findHeaderRow, fingerprints, parseAmountCell, parseDateCell, parseLines, type Cell,
+  detectColumns, findHeaderRow, fingerprints, parseAmountCell, parseDateCell, parseLines, pickTransactionSheet, type Cell,
 } from "./statementImport";
 import { categorize } from "./categorizeRules";
 import { ALL_CATEGORY_NAMES } from "./scheduleC";
@@ -172,5 +172,31 @@ describe("categorize", () => {
     for (const d of ["x", "shell", "stripe", "irs", "atm", "refund", "loan", "uber", "rent"]) {
       for (const dir of ["in", "out"] as const) expect(ALL_CATEGORY_NAMES).toContain(categorize(d, dir).category);
     }
+  });
+});
+
+describe("pickTransactionSheet", () => {
+  const pnl: Cell[][] = [
+    ["Profit & Loss Statement"],
+    ["Line", "Description", "Jan-25", "Feb-25", "FY 2025"],
+    ["9", "Car and truck expenses", 0, 268.61, 268.61],
+    ["25", "Utilities", 46.34, 0, 46.34],
+  ];
+  const ledger: Cell[][] = [
+    ["Date", "Description", "Amount", "Debit / Credit"],
+    [new Date(2025, 0, 2), "Transfer from savings", 250, "Credit"],
+    [new Date(2025, 0, 6), "Snyder Learning", -626, "Debit"],
+    ["see note", "Coffee", -4, "Debit"], // unreadable date
+  ];
+  const clean: Cell[][] = ledger.slice(0, 3);
+
+  it("skips a P&L summary tab in favour of the transaction list", () => {
+    expect(pickTransactionSheet([{ name: "P&L", rows: pnl }, { name: "Transactions", rows: clean }])).toEqual({ name: "Transactions", count: 2 });
+  });
+  it("on a tie, prefers the sheet with no unreadable rows", () => {
+    expect(pickTransactionSheet([{ name: "Ledger", rows: ledger }, { name: "Transactions", rows: clean }])?.name).toBe("Transactions");
+  });
+  it("returns null when no sheet has transactions", () => {
+    expect(pickTransactionSheet([{ name: "P&L", rows: pnl }])).toBeNull();
   });
 });
