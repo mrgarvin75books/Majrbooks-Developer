@@ -13,11 +13,17 @@ export type TxType = "income" | "expense" | "transfer" | "personal" | "needs_rev
 export interface ScheduleCTransaction {
   date: string;
   description: string;
-  /** Always positive; direction comes from `type`. */
+  /** Always positive; direction comes from `type` (and `direction` when given). */
   amount: number;
   category: string;
   type: TxType;
   notes: string;
+  /**
+   * Which way the money moved, when known. Money in on an expense line (a
+   * refund) reduces that line; money out on an income line (a return)
+   * reduces income. Without it every amount counts in the type's direction.
+   */
+  direction?: "in" | "out";
 }
 
 export type CategoryKind = "income" | "cogs" | "expense";
@@ -150,6 +156,7 @@ export function computeSummary(transactions: ScheduleCTransaction[]): ScheduleCS
   const expenseBy = new Map<string, Cents>();
   const lineAmounts = new Map<string, Cents>();
   const otherDetail = new Map<string, Cents>();
+  const partial = new Map<string, Cents>(); // full amounts of partly deductible categories
   let cogs = 0;
   let line1 = 0;
   let line6 = 0;
@@ -165,20 +172,30 @@ export function computeSummary(transactions: ScheduleCTransaction[]): ScheduleCS
     const def = categoryFor(tx.category);
     if (tx.type === "income") {
       const name = def?.kind === "income" ? def.name : "Sales / gross receipts";
-      add(incomeBy, name, amt);
-      if (name === "Other business income") line6 += amt; else line1 += amt;
+      const v = tx.direction === "out" ? -amt : amt; // a return reduces income
+      add(incomeBy, name, v);
+      if (name === "Other business income") line6 += v; else line1 += v;
       continue;
     }
-    // expense
-    if (def?.kind === "cogs") { cogs += amt; continue; }
+    // expense; a refund (money in) reduces the line it belongs to
+    const v = tx.direction === "in" ? -amt : amt;
+    if (def?.kind === "cogs") { cogs += v; continue; }
     const expDef = def && def.kind === "expense" ? def : null;
     if (!expDef) excluded.uncategorized++;
     const label = expDef?.name ?? (tx.category?.trim() || "Other expenses");
-    add(expenseBy, label, amt);
+    add(expenseBy, label, v);
     const line = expDef?.line ?? "27a";
-    const deductible = expDef?.deductibleShare != null ? Math.round(amt * expDef.deductibleShare) : amt;
-    add(lineAmounts, line, deductible);
-    if (line === "27a") add(otherDetail, label, deductible);
+    // Partly deductible categories (meals 50%) are limited once on their total below,
+    // so per-transaction rounding can't drift from the form's own arithmetic.
+    if (expDef?.deductibleShare != null) { add(partial, expDef.name, v); continue; }
+    add(lineAmounts, line, v);
+    if (line === "27a") add(otherDetail, label, v);
+  }
+  for (const [name, total] of partial) {
+    const def = categoryFor(name)!;
+    const deductible = Math.round(total * def.deductibleShare!);
+    add(lineAmounts, def.line, deductible);
+    if (def.line === "27a") add(otherDetail, name, deductible);
   }
 
   const sortDesc = (m: Map<string, Cents>) =>
@@ -242,6 +259,7 @@ export function normalizeTransactions(raw: unknown): ScheduleCTransaction[] {
         category: String(t.category ?? (type === "needs_review" ? "Needs review" : "Other expenses")),
         type,
         notes: String(t.notes ?? ""),
+        ...(t.direction === "in" || t.direction === "out" ? { direction: t.direction } : {}),
       };
     });
 }
