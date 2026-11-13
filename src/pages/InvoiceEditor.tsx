@@ -37,6 +37,8 @@ const InvoiceEditor = () => {
   const [clientName, setClientName] = useState("");
   const [clientEmail, setClientEmail] = useState("");
   const [clientUserId, setClientUserId] = useState<string | null>(null);
+  const [clients, setClients] = useState<{ id: string; client_name: string; email: string | null }[]>([]);
+  const [selectedClientId, setSelectedClientId] = useState<string>("");
   
   const [formData, setFormData] = useState({
     invoice_number: `INV-${Date.now()}`,
@@ -64,22 +66,37 @@ const InvoiceEditor = () => {
     }
   }, [user, id, clientId]);
 
-  const loadClient = async () => {
-    if (!user || !clientId) return;
-    
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from("clients")
+      .select("id, client_name, email")
+      .eq("user_id", user.id)
+      .order("client_name")
+      .then(({ data, error }) => {
+        if (error) console.error("Error loading clients:", error);
+        else setClients(data || []);
+      });
+  }, [user]);
+
+  const loadClient = async (selectedId: string | null = clientId) => {
+    if (!user || !selectedId) return;
+
     try {
       const { data, error } = await supabase
         .from("clients")
         .select("client_name, email")
-        .eq("id", clientId)
+        .eq("id", selectedId)
         .eq("user_id", user.id)
         .single();
-        
+
       if (error) throw error;
       if (data) {
+        setSelectedClientId(selectedId);
         setClientName(data.client_name);
         setClientEmail(data.email || "");
-        
+        setClientUserId(null);
+
         // Look up client_user_id from accepted invitations
         if (data.email) {
           const { data: invitation } = await supabase
@@ -437,10 +454,47 @@ const InvoiceEditor = () => {
               <CardContent className="p-6 space-y-6">
                 {/* Header Section */}
                 <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <h3 className="font-semibold mb-2">Billed To</h3>
-                    <p className="text-lg font-medium">{clientName || "Select Client"}</p>
-                    {clientEmail && <p className="text-sm text-muted-foreground">{clientEmail}</p>}
+                  <div className="space-y-4">
+                    <h3 className="font-semibold">Billed To</h3>
+                    {clients.length > 0 && (
+                      <div>
+                        <Label>Saved client</Label>
+                        <Select value={selectedClientId} onValueChange={(v) => loadClient(v)}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Choose a client" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {clients.map((c) => (
+                              <SelectItem key={c.id} value={c.id}>
+                                {c.client_name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    )}
+                    <div>
+                      <Label>Client name</Label>
+                      <Input
+                        value={clientName}
+                        placeholder="Client or company name"
+                        onChange={(e) => setClientName(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <Label>Client email</Label>
+                      <Input
+                        type="email"
+                        value={clientEmail}
+                        placeholder="client@example.com"
+                        onChange={(e) => {
+                          setClientEmail(e.target.value);
+                          // A different email may be a different person; drop the portal link.
+                          setClientUserId(null);
+                          setSelectedClientId("");
+                        }}
+                      />
+                    </div>
                   </div>
                   
                   <div className="space-y-4">
