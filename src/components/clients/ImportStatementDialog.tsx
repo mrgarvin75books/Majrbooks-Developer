@@ -149,14 +149,20 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
       if (batchErr) throw batchErr;
 
       // Find which lines are already saved for this client, then insert the rest.
-      const existing = new Set<string>();
-      const keys = prepared.map((l) => l.fingerprint);
-      for (let i = 0; i < keys.length; i += 500) {
-        const { data, error: e } = await supabase.from("client_statement_transactions").select("fingerprint")
-          .eq("client_id", clientId).in("fingerprint", keys.slice(i, i + 500));
+      // Load the saved lines for the statement's dates page by page rather than
+      // sending every fingerprint in the request: hundreds of long fingerprints
+      // make the URL too long and the server answers "Bad Request".
+      const existingId = new Map<string, string>(); // fingerprint -> id
+      for (let from = 0; ; from += 1000) {
+        const { data, error: e } = await supabase.from("client_statement_transactions").select("id, fingerprint")
+          .eq("client_id", clientId)
+          .gte("txn_date", period!.start).lte("txn_date", period!.end)
+          .order("id").range(from, from + 999);
         if (e) throw e;
-        data?.forEach((d) => existing.add(d.fingerprint));
+        data?.forEach((d) => existingId.set(d.fingerprint, d.id));
+        if (!data || data.length < 1000) break;
       }
+      const existing = new Set(existingId.keys());
       const fresh = prepared.filter((l) => !existing.has(l.fingerprint));
       for (let i = 0; i < fresh.length; i += 500) {
         const { error: e } = await supabase.from("client_statement_transactions").upsert(
@@ -182,21 +188,21 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
 
       // Lines saved earlier (e.g. from the uncategorised tab of the same workbook)
       // take the workbook's categories when this sheet has them.
-      const recat = new Map<string, { patch: { type: string; category: string; notes: string }; keys: string[] }>();
+      const recat = new Map<string, { patch: { type: string; category: string; notes: string }; ids: string[] }>();
       for (const l of prepared) {
         if (!l.fromSheet || !existing.has(l.fingerprint)) continue;
         const patch = { type: l.type, category: l.category, notes: l.notes };
         const k = JSON.stringify(patch);
-        if (!recat.has(k)) recat.set(k, { patch, keys: [] });
-        recat.get(k)!.keys.push(l.fingerprint);
+        if (!recat.has(k)) recat.set(k, { patch, ids: [] });
+        recat.get(k)!.ids.push(existingId.get(l.fingerprint)!);
       }
       let updated = 0;
-      for (const { patch, keys: ks } of recat.values()) {
-        for (let i = 0; i < ks.length; i += 200) {
+      for (const { patch, ids } of recat.values()) {
+        for (let i = 0; i < ids.length; i += 100) {
           const { error: e } = await supabase.from("client_statement_transactions").update(patch)
-            .eq("client_id", clientId).in("fingerprint", ks.slice(i, i + 200));
+            .eq("client_id", clientId).in("id", ids.slice(i, i + 100));
           if (e) throw e;
-          updated += ks.slice(i, i + 200).length;
+          updated += ids.slice(i, i + 100).length;
         }
       }
 
