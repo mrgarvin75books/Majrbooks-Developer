@@ -23,7 +23,9 @@ interface LineItem {
 }
 
 const InvoiceEditor = () => {
-  const { id } = useParams();
+  const { id: routeId } = useParams();
+  // "/invoice/new" means create a new invoice, not load one with id "new".
+  const id = routeId && routeId !== "new" ? routeId : undefined;
   const [searchParams] = useSearchParams();
   const clientId = searchParams.get("clientId");
   const { user } = useAuth();
