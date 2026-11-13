@@ -617,7 +617,7 @@ const BankTransactions = () => {
   const initializeDefaultAccounts = async () => {
     const defaultAccounts = [
       { name: "Checking", account_type: "Bank", detail_type: "Checking", action_type: "register", bank_balance: 0 },
-      { name: "QuickBooks Checking Account", account_type: "Bank", detail_type: "Checking", action_type: "register", bank_balance: 0 },
+      { name: "Business Checking Account", account_type: "Bank", detail_type: "Checking", action_type: "register", bank_balance: 0 },
       { name: "Inventory Asset", account_type: "Other Current Assets", detail_type: "Inventory", action_type: "register" },
       { name: "Uncategorized Asset", account_type: "Other Current Assets", detail_type: "Other Current Assets", action_type: "register" },
       { name: "Undeposited Funds", account_type: "Other Current Assets", detail_type: "Undeposited Funds", action_type: "register" },
@@ -2606,7 +2606,7 @@ const BankTransactions = () => {
                             Use rules to save time
                           </h3>
                           <p className="text-muted-foreground mb-4 max-w-2xl">
-                            Make rules for your frequently occurring transactions and tell QuickBooks exactly what should happen when conditions are met.{" "}
+                            Make rules for your frequently occurring transactions and tell MAJR Books exactly what should happen when conditions are met.{" "}
                             <Button
                               variant="link"
                               className="p-0 h-auto text-primary"
@@ -2836,7 +2836,7 @@ const BankTransactions = () => {
                     </TableHead>
                     <TableHead>
                       <Button variant="ghost" className="h-auto p-0 hover:bg-transparent font-semibold text-xs">
-                        QUICKBOOKS BALANCE
+                        MAJR BOOKS BALANCE
                         <ChevronDown className="ml-1 h-3 w-3" />
                       </Button>
                     </TableHead>
