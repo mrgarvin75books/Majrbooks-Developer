@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { sheetCategory } from "./sheetCategories";
-import { detectColumns, parseLines, type Cell } from "./statementImport";
+import { detectColumns, parseDirectionCell, parseLines, type Cell } from "./statementImport";
 import { computeSummary } from "./scheduleC";
 
 describe("sheetCategory", () => {
@@ -57,6 +57,34 @@ describe("Schedule C columns in a workbook", () => {
     expect(detectColumns(["Date", "Month", "Account", "Description", "Bank Amount", "Section", "Category (Schedule C)", "P&L Amount"]))
       .toMatchObject({ date: 0, description: 3, amount: 4, category: 6 });
   });
+
+  it("uses a Type column for in/out when every amount is positive", () => {
+    const rows: Cell[][] = [
+      ["Date", "Month", "Account", "Description", "Type", "Schedule C Category", "Line", "Amount"],
+      ["2025-08-01", "Aug-25", "Checking", "BP GLENBUR", "Expense", "Car and truck expenses", "9", 19.01],
+      ["2025-08-04", "Aug-25", "Checking", "uShip Payout", "Income", "Gross receipts or sales", "1", 167.58],
+      ["2025-08-05", "Aug-25", "Checking", "APPLE COM BILL", "Expense", "Dues/subscriptions/entertainment", "27a", 6.39],
+    ];
+    const map = detectColumns(rows[0]);
+    // The Line column wins over the category name, which becomes the note.
+    expect(map).toMatchObject({ amount: 7, direction: 4, category: 6, detail: 5 });
+    const { lines } = parseLines(rows, 0, map);
+    expect(lines.map((l) => l.direction)).toEqual(["out", "in", "out"]);
+    expect(sheetCategory(lines[2].sheet)).toMatchObject({ category: "Other expenses", notes: "Dues/subscriptions/entertainment" });
+  });
+
+  it("ignores the Type column when the amounts are signed (a refund stays money in)", () => {
+    const rows: Cell[][] = [
+      ["Date", "Description", "Bank Amount", "Section"],
+      ["2026-01-02", "Netflix", -26.68, "Expense"],
+      ["2026-01-09", "Duplicate charge refunded", 40, "Expense"],
+    ];
+    expect(parseLines(rows, 0, detectColumns(rows[0])).lines.map((l) => l.direction)).toEqual(["out", "in"]);
+  });
+
+  it.each([
+    ["Income", "in"], ["Credit", "in"], ["Deposit", "in"], ["Expense", "out"], ["Debit", "out"], ["Withdrawal", "out"], ["", null], ["Transfer", null],
+  ])("direction cell %p -> %p", (v, d) => expect(parseDirectionCell(v)).toBe(d));
 
   it("leaves $0.00 lines out quietly instead of reporting them as errors", () => {
     const rows: Cell[][] = [["Date", "Description", "Amount"], ["2026-08-12", "BILL PAY Duke Energy", 0], ["2026-08-13", "Duke Energy", -120.5]];

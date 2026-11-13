@@ -30,6 +30,20 @@ export interface ColumnMapping {
   treatment?: number | null;
   detail?: number | null;
   include?: number | null;
+  /**
+   * Optional column saying which way the money moved ("Income"/"Expense",
+   * "Credit"/"Debit", "In"/"Out"). Used only when the amount column has no
+   * negative numbers, i.e. the sheet shows every amount as positive.
+   */
+  direction?: number | null;
+}
+
+/** Reads a direction cell: Income/Credit/Deposit/In → "in"; Expense/Debit/Withdrawal/Out → "out". */
+export function parseDirectionCell(value: Cell): "in" | "out" | null {
+  const s = String(value ?? "").trim().toLowerCase();
+  if (/^(income|credit|cr|deposit|in|money in|receipt|revenue|sale)s?\b/.test(s)) return "in";
+  if (/^(expense|debit|dr|withdrawal|out|money out|payment|purchase|charge)s?\b/.test(s)) return "out";
+  return null;
 }
 
 /** Raw category text read from the sheet's bookkeeper columns. */
@@ -100,18 +114,30 @@ export function detectColumns(header: Cell[]): ColumnMapping {
   // Bookkeeper category columns. Only clearly Schedule C columns count: a
   // loose "Spending Category" (e.g. "Children & Family") isn't a tax category.
   const taken = [...used, description ?? -1];
-  const category =
-    find(/^sch(edule)?\.?\s*c\s*line( ?#| no\.?| number)?$/, taken) ??
-    find(/^(sch(edule)?\.?\s*c|tax)\s*(category|line description)$|^schedule c category$|^category$|^category\s*\(\s*sch(edule)?\.?\s*c\s*\)$/, taken);
-  const treatment = find(/^sch(edule)?\.?\s*c\s*treatment$|^treatment$/, [...taken, category ?? -1]);
-  const detail = find(/^part v detail|^other expense (type|detail)/, [...taken, category ?? -1, treatment ?? -1]);
-  const include = find(/^include on sch(edule)?\.?\s*c/, [...taken, category ?? -1, treatment ?? -1, detail ?? -1]);
+  // A Schedule C line number column is the most precise; a category-name column
+  // next to it is kept as the note ("Dues/subscriptions/entertainment").
+  const lineCol = find(/^(sch(edule)?\.?\s*c\s*)?line( ?#| no\.?| number)?$/, taken);
+  const nameCol = find(
+    /^(sch(edule)?\.?\s*c|tax)\s*(category|line description)$|^schedule c category$|^category$|^category\s*\(\s*sch(edule)?\.?\s*c\s*\)$/,
+    [...taken, lineCol ?? -1],
+  );
+  const category = lineCol ?? nameCol;
+  const treatment = find(/^sch(edule)?\.?\s*c\s*treatment$|^treatment$/, [...taken, lineCol ?? -1, nameCol ?? -1]);
+  const detail = find(/^part v detail|^other expense (type|detail)/, [...taken, lineCol ?? -1, nameCol ?? -1, treatment ?? -1])
+    ?? (lineCol !== null ? nameCol : null);
+  const include = find(/^include on sch(edule)?\.?\s*c/, [...taken, lineCol ?? -1, nameCol ?? -1, treatment ?? -1, detail ?? -1]);
+  // "Type" / "Debit / Credit" / "Section": Income/Expense, Credit/Debit, In/Out.
+  const directionCol = amount !== null
+    ? find(/^(type|transaction type|txn type|debit\s*\/\s*credit|credit\s*\/\s*debit|dr\s*\/\s*cr|cr\s*\/\s*dr|direction|in\s*\/\s*out|section)$/,
+      [...taken, category ?? -1, treatment ?? -1, detail ?? -1, include ?? -1])
+    : null;
 
   return {
     date, description, amount,
     debit: amount === null ? debit : null,
     credit: amount === null ? credit : null,
     category, treatment, detail, include,
+    direction: directionCol,
   };
 }
 
@@ -211,6 +237,13 @@ export function parseLines(
   let skipped = 0;
   let zeroAmount = 0;
 
+  // A direction column decides in/out only when every amount is positive; when
+  // the sheet signs its amounts, the sign wins (a refund on an "Expense" line
+  // is still money in).
+  const amountCol = map.amount;
+  const useDirectionCol = amountCol !== null && map.direction != null
+    && !rows.slice(headerRow + 1).some((r) => (parseAmountCell((r ?? [])[amountCol]) ?? 0) < 0);
+
   for (let i = headerRow + 1; i < rows.length; i++) {
     const r = rows[i] ?? [];
     const rowNo = i + 1;
@@ -226,7 +259,7 @@ export function parseLines(
       if (v !== null && v !== 0) {
         const out = sign === "negative_is_out" ? v < 0 : v > 0;
         cents = Math.abs(v);
-        direction = out ? "out" : "in";
+        direction = (useDirectionCol ? parseDirectionCell(r[map.direction!]) : null) ?? (out ? "out" : "in");
       }
     } else {
       const out = map.debit !== null ? parseAmountCell(r[map.debit]) : null;
