@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as XLSX from "xlsx";
 import {
+  parsePeriodCell, parseYearlessDate,
   detectColumns, findHeaderRow, fingerprints, parseAmountCell, parseDateCell, parseLines, pickTransactionSheet, type Cell,
 } from "./statementImport";
 import { categorize } from "./categorizeRules";
@@ -198,5 +199,42 @@ describe("pickTransactionSheet", () => {
   });
   it("returns null when no sheet has transactions", () => {
     expect(pickTransactionSheet([{ name: "P&L", rows: pnl }])).toBeNull();
+  });
+});
+
+describe("statement exports with a Month column and month/day dates", () => {
+  const rows: Cell[][] = [
+    ["Account", "Month", "Date", "Description", "Flow", "Amount", "Signed Amount", "Category", "Schedule C Line", "Treatment"],
+    ["Truist", "Jan-2026", "01/02", "DEBIT CARD RECURRING PYMT Netflix.com", "out", 26.68, -26.68, "Streaming", "Line 27a - Verify", "expense"],
+    ["Truist", "Jan-2026", "01/05", "Medicaid deposit", "in", 1500, 1500, "Gross receipts", "Line 1", "income"],
+    ["Bluevine", "Jan-2026", "12/31", "Late Dec fee", "out", 5, -5, "Bank fees", "Line 27a", "expense"],
+  ];
+
+  it("finds the Month and Flow columns", () => {
+    const map = detectColumns(rows[0]);
+    expect(map).toMatchObject({ date: 2, description: 3, amount: 5, period: 1, direction: 4, category: 8, treatment: 9 });
+  });
+
+  it("takes the year from the Month column and in/out from Flow", () => {
+    const res = parseLines(rows, 0, detectColumns(rows[0]));
+    expect(res.errors).toEqual([]);
+    expect(res.lines.map((l) => [l.date, l.direction, l.cents])).toEqual([
+      ["2026-01-02", "out", 2668],
+      ["2026-01-05", "in", 150000],
+      ["2025-12-31", "out", 500],
+    ]);
+  });
+
+  it("says the year is missing when there is no Month column", () => {
+    const res = parseLines(rows, 0, { ...detectColumns(rows[0]), period: null });
+    expect(res.errors[0].reason).toMatch(/has no year/);
+  });
+
+  it("reads period cells", () => {
+    expect(parsePeriodCell("Jan-2026")).toEqual({ year: 2026, month: 1 });
+    expect(parsePeriodCell("January 2026")).toEqual({ year: 2026, month: 1 });
+    expect(parsePeriodCell("2026-03")).toEqual({ year: 2026, month: 3 });
+    expect(parsePeriodCell(2026)).toEqual({ year: 2026 });
+    expect(parseYearlessDate("01/02", { year: 2026, month: 12 })).toBe("2027-01-02");
   });
 });

@@ -36,6 +36,12 @@ export interface ColumnMapping {
    * negative numbers, i.e. the sheet shows every amount as positive.
    */
   direction?: number | null;
+  /**
+   * Optional column naming the statement month or year ("Jan-2026",
+   * "2026-01", "January 2026", 2026). Supplies the year when the date column
+   * shows only month and day ("01/02"), as statement exports often do.
+   */
+  period?: number | null;
 }
 
 /** Reads a direction cell: Income/Credit/Deposit/In → "in"; Expense/Debit/Withdrawal/Out → "out". */
@@ -128,9 +134,11 @@ export function detectColumns(header: Cell[]): ColumnMapping {
   const include = find(/^include on sch(edule)?\.?\s*c/, [...taken, lineCol ?? -1, nameCol ?? -1, treatment ?? -1, detail ?? -1]);
   // "Type" / "Debit / Credit" / "Section": Income/Expense, Credit/Debit, In/Out.
   const directionCol = amount !== null
-    ? find(/^(type|transaction type|txn type|debit\s*\/\s*credit|credit\s*\/\s*debit|dr\s*\/\s*cr|cr\s*\/\s*dr|direction|in\s*\/\s*out|section)$/,
+    ? find(/^(type|transaction type|txn type|debit\s*\/\s*credit|credit\s*\/\s*debit|dr\s*\/\s*cr|cr\s*\/\s*dr|direction|flow|cash flow|in\s*\/\s*out|section)$/,
       [...taken, category ?? -1, treatment ?? -1, detail ?? -1, include ?? -1])
     : null;
+  const period = find(/^(month|period|year|statement( month| period| date)?|stmt( month| period)?|tax year)$/,
+    [...taken, category ?? -1, treatment ?? -1, detail ?? -1, include ?? -1, directionCol ?? -1]);
 
   return {
     date, description, amount,
@@ -138,6 +146,7 @@ export function detectColumns(header: Cell[]): ColumnMapping {
     credit: amount === null ? credit : null,
     category, treatment, detail, include,
     direction: directionCol,
+    period,
   };
 }
 
@@ -152,6 +161,67 @@ function validDate(y: number, m: number, d: number): boolean {
 const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
 };
+
+/**
+ * Reads a statement-period cell: "Jan-2026", "January 2026", "2026-01",
+ * "01/2026", 2026, or a date. Returns the year, and the month when it names one.
+ */
+export function parsePeriodCell(value: Cell): { year: number; month?: number } | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    return { year: value.getFullYear(), month: value.getMonth() + 1 };
+  }
+  if (typeof value === "number") {
+    if (value >= 1990 && value <= 2100 && Number.isInteger(value)) return { year: value };
+    const d = parseDateCell(value);
+    return d ? { year: +d.slice(0, 4), month: +d.slice(5, 7) } : null;
+  }
+  const s = String(value).trim();
+  const full = parseDateCell(s);
+  if (full) return { year: +full.slice(0, 4), month: +full.slice(5, 7) };
+  let m: RegExpMatchArray | null;
+  const ok = (y: number) => y >= 1990 && y <= 2100;
+  if ((m = s.match(/^([A-Za-z]{3,9})\.?[-\s/,']+(\d{2}|\d{4})$/))) {
+    const mo = MONTHS[m[1].slice(0, 4).toLowerCase()] ?? MONTHS[m[1].slice(0, 3).toLowerCase()];
+    const y = m[2].length === 2 ? 2000 + +m[2] : +m[2];
+    return mo && ok(y) ? { year: y, month: mo } : null;
+  }
+  if ((m = s.match(/^(\d{4})[-/.](\d{1,2})$/)) && +m[2] >= 1 && +m[2] <= 12 && ok(+m[1])) return { year: +m[1], month: +m[2] };
+  if ((m = s.match(/^(\d{1,2})[-/.](\d{4})$/)) && +m[1] >= 1 && +m[1] <= 12 && ok(+m[2])) return { year: +m[2], month: +m[1] };
+  if ((m = s.match(/^(?:FY|TY)?\s*(\d{4})$/i)) && ok(+m[1])) return { year: +m[1] };
+  return null;
+}
+
+/**
+ * Parses a month-and-day date with no year ("01/02", "1-2", "Jan 2") using
+ * the statement period for the year. A December line on a January statement
+ * (or the reverse) is put in the neighbouring year.
+ */
+export function parseYearlessDate(value: Cell, period: { year: number; month?: number } | null): string | null {
+  if (!period || typeof value !== "string") return null;
+  const s = value.trim();
+  let m: RegExpMatchArray | null;
+  let mo: number | undefined;
+  let d: number | undefined;
+  if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})$/))) {
+    [mo, d] = [+m[1], +m[2]];
+    if (mo > 12 && d <= 12) [mo, d] = [d, mo];
+  } else if ((m = s.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2})$/))) {
+    mo = MONTHS[m[1].slice(0, 4).toLowerCase()] ?? MONTHS[m[1].slice(0, 3).toLowerCase()];
+    d = +m[2];
+  } else if ((m = s.match(/^(\d{1,2})[-\s]([A-Za-z]{3,9})\.?$/))) {
+    mo = MONTHS[m[2].slice(0, 4).toLowerCase()] ?? MONTHS[m[2].slice(0, 3).toLowerCase()];
+    d = +m[1];
+  }
+  if (!mo || !d) return null;
+  let y = period.year;
+  if (period.month) {
+    if (mo - period.month > 6) y -= 1;
+    else if (period.month - mo > 6) y += 1;
+  }
+  return validDate(y, mo, d) ? iso(y, mo, d) : null;
+}
 
 /** Parses a date cell into YYYY-MM-DD (US month-first when ambiguous). */
 export function parseDateCell(value: Cell): string | null {
@@ -278,10 +348,17 @@ export function parseLines(
       continue;
     }
 
-    const date = parseDateCell(rawDate);
+    const date = parseDateCell(rawDate)
+      ?? (map.period != null ? parseYearlessDate(rawDate, parsePeriodCell(r[map.period])) : null);
     // Rows with neither an amount nor a description carry nothing to import.
     if ((!date || !desc) && cents === null) { skipped++; continue; }
-    if (!date) { errors.push({ row: rowNo, reason: `date "${String(rawDate ?? "")}" not recognised` }); continue; }
+    if (!date) {
+      const yearless = typeof rawDate === "string" && /^\d{1,2}[-/.]\d{1,2}$/.test(rawDate.trim());
+      errors.push({ row: rowNo, reason: yearless
+        ? `date "${rawDate}" has no year (add a year to the date, or a "Month" column such as "Jan-2026")`
+        : `date "${String(rawDate ?? "")}" not recognised` });
+      continue;
+    }
     if ((cents === null || direction === null) && zero) { skipped++; zeroAmount++; continue; }
     if (cents === null || direction === null) { errors.push({ row: rowNo, reason: "no amount" }); continue; }
 

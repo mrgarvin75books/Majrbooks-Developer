@@ -383,15 +383,17 @@ export function ImportStatementDialog({ open, onOpenChange, clientId, clientName
                     ))
                   )}
                   {([
-                    ["category", "Schedule C line / category column (optional)"],
-                    ["treatment", "Treatment column (optional)"],
-                  ] as const).map(([k, label]) => (
+                    ["category", "Schedule C line / category column (optional)", "(none: use built-in rules)"],
+                    ["treatment", "Treatment column (optional)", "(none: use built-in rules)"],
+                    ...(singleAmount ? [["direction", "In / out column (optional)", "(none: use the amount's sign)"] as const] : []),
+                    ["period", "Month / year column (optional)", "(none: dates include the year)"],
+                  ] as const).map(([k, label, noneLabel]) => (
                     <div key={k} className="space-y-1">
                       <Label>{label}</Label>
                       <Select value={mapping[k] == null ? NONE : String(mapping[k])} onValueChange={setCol(k)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value={NONE}>(none: use built-in rules)</SelectItem>
+                          <SelectItem value={NONE}>{noneLabel}</SelectItem>
                           {colOptions.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                         </SelectContent>
                       </Select>
