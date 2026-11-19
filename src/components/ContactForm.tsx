@@ -144,8 +144,8 @@ export const ContactForm = () => {
             <div>
               <h4 className="font-semibold mb-1">Visit Us</h4>
               <p className="text-muted-foreground">
-                6085 Raeford Rd Suite 110<br />
-                Fayetteville, North Carolina 28304
+                8108 Cliffdale Rd Suite 104<br />
+                Fayetteville, North Carolina 28314
               </p>
             </div>
           </div>

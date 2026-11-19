@@ -917,7 +917,7 @@ const Index = () => {
                 </li>
                 <li className="flex items-start gap-2">
                   <MapPin className="h-4 w-4 text-primary mt-1" />
-                  <span>6085 Raeford Rd Suite 110<br />Fayetteville, NC 28304</span>
+                  <span>8108 Cliffdale Rd Suite 104<br />Fayetteville, NC 28314</span>
                 </li>
               </ul>
             </div>
