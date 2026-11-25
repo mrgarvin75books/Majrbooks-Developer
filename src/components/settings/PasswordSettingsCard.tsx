@@ -75,8 +75,8 @@ export function PasswordSettingsCard() {
   const handleSendResetLink = async () => {
     if (!user?.email) return;
     setSendingLink(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
-      redirectTo: `${window.location.origin}/auth?reset=true`,
+    const { error } = await supabase.functions.invoke("request-password-reset", {
+      body: { email: user.email },
     });
     setSendingLink(false);
 

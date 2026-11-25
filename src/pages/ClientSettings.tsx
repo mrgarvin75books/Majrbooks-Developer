@@ -109,6 +109,8 @@ const ClientSettings = () => {
     try {
       const { error } = await supabase.auth.updateUser({ password: pwForm.newPassword });
       if (error) throw error;
+      // Security notice to the account's own email; never blocks the change.
+      supabase.functions.invoke("send-password-changed").catch(() => {});
       setPwSuccess(true);
       setPwForm({ newPassword: "", confirmPassword: "" });
       setTimeout(() => setPwSuccess(false), 4000);

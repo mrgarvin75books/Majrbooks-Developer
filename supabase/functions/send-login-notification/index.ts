@@ -8,6 +8,7 @@ import {
   jsonResponse,
   serviceClient,
 } from "../_shared/security.ts";
+import { sendSignupConfirmationEmail } from "../_shared/email/workflows.ts";
 
 const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 const SIGNUP_WINDOW_MS = 15 * 60 * 1000;
@@ -25,7 +26,8 @@ async function sendEmail(to: string, subject: string, html: string) {
 }
 
 // Sends (a) an internal activity notice to support@majrbooks.com and
-// (b) on signup, a one-time welcome email to the new user.
+// (b) on signup, a one-time "account created" email to the new user
+//     (owner, client or staff variant; see _shared/email/templates.ts).
 //
 // The recipient is never taken from the request body:
 //  - login:  the caller must be signed in; their own account email is used.
@@ -97,34 +99,14 @@ serve(async (req) => {
       `,
     );
 
-    // Welcome email: only for self-signups that actually received a trial
-    // (invited clients and team members don't get a trial).
-    const meta = user.user_metadata ?? {};
-    if (eventType === "signup" && !meta.is_client && !meta.is_team_member) {
-      await sendEmail(
-        email,
-        "Welcome to MajrBooks - Your 14-Day Free Trial Has Started!",
-        `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h1 style="color: #00C896;">Welcome to MajrBooks!</h1>
-            <p>Hi ${displayName},</p>
-            <p>Thank you for signing up! Your <strong>14-day free trial</strong> has started.</p>
-            <div style="background: #f0fdf4; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #00C896;">
-              <h3 style="margin-top: 0;">During your trial, you get full access to:</h3>
-              <ul>
-                <li>Complete bookkeeping and invoicing</li>
-                <li>Payroll management</li>
-                <li>Tax preparation tools</li>
-                <li>AI-powered tax assistance</li>
-                <li>And much more!</li>
-              </ul>
-            </div>
-            <p>After your trial ends, you can choose a plan that fits your needs.</p>
-            <p>If you have any questions, feel free to reach out to us at support@majrbooks.com</p>
-            <p>Best regards,<br>The MajrBooks Team</p>
-          </div>
-        `,
-      );
+    // "Your Account Has Been Successfully Created!" — client, staff or owner
+    // variant, chosen from the database (not from user-editable metadata).
+    // Sent once per account (dedupe key + app_metadata flag).
+    if (eventType === "signup") {
+      const result = await sendSignupConfirmationEmail(admin, user);
+      if (result.status === "failed") {
+        console.error("Signup confirmation email failed", { log_id: result.logId });
+      }
     }
 
     if (eventType === "signup") {

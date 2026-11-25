@@ -16,6 +16,7 @@ import {
   BarChart3,
   Workflow,
   Receipt,
+  Mail,
 } from "lucide-react";
 import majrLogo from "@/assets/logo-majr-books.jpg";
 
@@ -47,6 +48,7 @@ const adminNavItems = [
   {
     section: "System",
     items: [
+      { path: "/admin?tab=emails", label: "Email Notifications", icon: Mail },
       { path: "/admin?tab=security", label: "Security Settings", icon: Shield },
       { path: "/admin?tab=audit", label: "Audit Logs", icon: Activity },
       { path: "/workflow-automation", label: "Workflows", icon: Workflow },
@@ -90,8 +92,11 @@ const AdminSidebar = () => {
             <div className="space-y-1">
               {section.items.map((item) => {
                 const Icon = item.icon;
-                const isActive = location.pathname === item.path || 
-                  (location.pathname === "/admin" && item.path.includes("admin?tab"));
+                // Highlight only the link for the current tab (/admin?tab=...).
+                const current = location.pathname + location.search;
+                const isActive = item.path.includes("?")
+                  ? current === item.path
+                  : location.pathname === item.path && (item.path !== "/admin" || !location.search);
                 
                 return (
                   <Link

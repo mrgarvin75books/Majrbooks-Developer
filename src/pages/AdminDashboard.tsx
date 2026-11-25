@@ -34,13 +34,14 @@ import AdminAuditLog from "@/components/admin/AdminAuditLog";
 import AdminUserManagement from "@/components/admin/AdminUserManagement";
 import AdminSystemSettings from "@/components/admin/AdminSystemSettings";
 import AdminSecuritySettings from "@/components/admin/AdminSecuritySettings";
+import AdminEmailNotifications from "@/components/admin/AdminEmailNotifications";
 
 const AdminDashboard = () => {
   const { user, isAdmin, signOut } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [lastActivity, setLastActivity] = useState(Date.now());
-  const VALID_TABS = ["overview", "users", "security", "audit", "system"];
+  const VALID_TABS = ["overview", "users", "emails", "security", "audit", "system"];
   const [activeTab, setActiveTab] = useState(() => {
     const t = searchParams.get("tab");
     return VALID_TABS.includes(t ?? "") ? t! : "overview";
@@ -244,9 +245,10 @@ const AdminDashboard = () => {
 
         {/* Main Content Tabs */}
         <Tabs defaultValue="overview" className="space-y-4" value={activeTab} onValueChange={handleTabChange}>
-          <TabsList className="grid grid-cols-5 w-full max-w-2xl">
+          <TabsList className="grid grid-cols-3 sm:grid-cols-6 h-auto sm:h-10 w-full max-w-3xl">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="users">Users</TabsTrigger>
+            <TabsTrigger value="emails">Emails</TabsTrigger>
             <TabsTrigger value="security">Security</TabsTrigger>
             <TabsTrigger value="audit">Audit Log</TabsTrigger>
             <TabsTrigger value="system">System</TabsTrigger>
@@ -342,6 +344,10 @@ const AdminDashboard = () => {
 
           <TabsContent value="users">
             <AdminUserManagement onBackToOverview={handleBackToOverview} />
+          </TabsContent>
+
+          <TabsContent value="emails">
+            <AdminEmailNotifications />
           </TabsContent>
 
           <TabsContent value="security">

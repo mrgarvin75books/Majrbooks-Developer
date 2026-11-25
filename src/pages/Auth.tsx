@@ -16,7 +16,10 @@ const Auth = () => {
   const [loading, setLoading] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [showPlanSelection, setShowPlanSelection] = useState(false);
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  // `/auth?forgot=1` (linked from security emails) opens the reset form directly.
+  const [showForgotPassword, setShowForgotPassword] = useState(
+    () => new URLSearchParams(window.location.search).get("forgot") === "1",
+  );
   const [resetEmailSent, setResetEmailSent] = useState(false);
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState("");
   const {
@@ -206,11 +209,21 @@ const Auth = () => {
 
     setLoading(true);
     try {
-      const { error } = await supabase.auth.resetPasswordForEmail(forgotPasswordEmail, {
-        redirectTo: `${window.location.origin}/auth?reset=true`,
+      // Branded, single-use reset link sent through Resend (see the
+      // request-password-reset edge function). The response is the same
+      // whether or not the address has an account.
+      const { error } = await supabase.functions.invoke('request-password-reset', {
+        body: { email: forgotPasswordEmail.trim() },
       });
 
-      if (error) throw error;
+      if (error) {
+        let message = error.message;
+        try {
+          const body = await (error as { context?: Response }).context?.json();
+          if (body?.error) message = body.error;
+        } catch { /* keep the generic message */ }
+        throw new Error(message);
+      }
 
       setResetEmailSent(true);
       toast({
@@ -674,8 +687,9 @@ const Auth = () => {
                     <Mail className="h-8 w-8 text-green-600" />
                   </div>
                   <p className="text-center text-muted-foreground">
-                    We've sent a password reset link to <strong>{forgotPasswordEmail}</strong>. 
-                    Please check your inbox and spam folder.
+                    If an account exists for <strong>{forgotPasswordEmail}</strong>, we've sent it a
+                    password reset link. The link works once and expires in 60 minutes — check your
+                    inbox and spam folder.
                   </p>
                 </div>
                 <Button 

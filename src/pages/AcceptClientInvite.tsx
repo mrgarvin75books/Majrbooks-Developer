@@ -123,11 +123,11 @@ const AcceptClientInvite = () => {
       return;
     }
 
-    if (formData.password.length < 6) {
+    if (formData.password.length < 8) {
       toast({
         variant: "destructive",
         title: "Password too short",
-        description: "Password must be at least 6 characters.",
+        description: "Password must be at least 8 characters.",
       });
       return;
     }
@@ -163,6 +163,16 @@ const AcceptClientInvite = () => {
         if (linkError) throw linkError;
         if (!linked) {
           throw new Error("Your account was created but could not be linked to this invitation. Please contact your accountant.");
+        }
+
+        // "Your Account Has Been Successfully Created!" (client variant). Awaited
+        // so it is sent before the sign-in below changes the session.
+        try {
+          await supabase.functions.invoke('send-login-notification', {
+            body: { eventType: 'signup', userId: authData.user.id, userAgent: navigator.userAgent },
+          });
+        } catch (err) {
+          console.error('Failed to send account created email:', err);
         }
       }
 
@@ -389,7 +399,7 @@ const AcceptClientInvite = () => {
                   placeholder="••••••••"
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  minLength={6}
+                  minLength={8}
                   required
                 />
               </div>
@@ -402,7 +412,7 @@ const AcceptClientInvite = () => {
                   placeholder="••••••••"
                   value={formData.confirmPassword}
                   onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
-                  minLength={6}
+                  minLength={8}
                   required
                 />
               </div>

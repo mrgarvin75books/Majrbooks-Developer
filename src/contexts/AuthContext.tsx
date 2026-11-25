@@ -287,6 +287,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     if (!error) {
       setIsPasswordRecovery(false);
+      // "Password changed" security email. The server sends it to the account's
+      // own address only; failures must never block the password change.
+      supabase.functions.invoke('send-password-changed').catch((err) => {
+        console.error('Failed to send password changed email:', err);
+      });
     }
     return { error };
   };

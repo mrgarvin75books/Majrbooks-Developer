@@ -99,6 +99,7 @@ import PayrollCostEstimator from "./pages/calculators/PayrollCostEstimator";
 import NotFound from "./pages/NotFound";
 import AcceptClientInvite from "./pages/AcceptClientInvite";
 import AcceptInvite from "./pages/AcceptInvite";
+import ResetPassword from "./pages/ResetPassword";
 import ClientSettings from "./pages/ClientSettings";
 import ClientBookkeepingAI from "./pages/ClientBookkeepingAI";
 import ClientOnboarding from "./pages/ClientOnboarding";
@@ -121,6 +122,7 @@ const App = () => (
             <Route path="/auth" element={<Auth />} />
             <Route path="/accept-client-invite" element={<AcceptClientInvite />} />
             <Route path="/accept-invite" element={<AcceptInvite />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
             {/* ── Client-only routes ── */}
             <Route element={<ClientRouteGuard requireClient />}>
