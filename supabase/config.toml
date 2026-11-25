@@ -51,3 +51,9 @@ verify_jwt = true
 
 [functions.analyze-client-document]
 verify_jwt = true
+
+[functions.notify-inbox-message]
+verify_jwt = false
+
+[functions.inbound-email]
+verify_jwt = false

@@ -18,6 +18,7 @@ import {
   Users,
   UsersRound,
   FolderOpen,
+  Inbox,
 } from "lucide-react";
 
 /**
@@ -170,6 +171,7 @@ export const practiceNav: NavSection[] = [
           { label: "Bulk upload", path: "/bulk-client-upload", show: adminOnly },
         ],
       },
+      { id: "messages", label: "Messages", path: "/messages", icon: Inbox },
     ],
   },
   {

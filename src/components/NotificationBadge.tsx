@@ -23,6 +23,7 @@ const notificationTypeIcons: Record<string, string> = {
   timesheet_approved: "✅",
   timesheet_rejected: "❌",
   client_invitation: "👥",
+  client_message: "✉️",
   payroll_reminder: "💵",
   system: "🔔",
   info: "ℹ️",

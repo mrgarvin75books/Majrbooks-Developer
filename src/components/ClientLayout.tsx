@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
+import { ChatWidget } from "@/components/ChatWidget";
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard,
@@ -189,6 +190,7 @@ const ClientLayout = ({ children }: Props) => {
           </div>
         </div>
       </footer>
+      <ChatWidget />
     </div>
   );
 };
