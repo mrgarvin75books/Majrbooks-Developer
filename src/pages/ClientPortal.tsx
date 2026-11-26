@@ -42,15 +42,35 @@ function fmt(n: number) {
   return n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-const ClientPortal = () => {
+const SAMPLE_CLIENT = { name: "Jordan Sample", email: "client@example.com" };
+
+function sampleInvoices(): Invoice[] {
+  const d = (offset: number) => new Date(Date.now() + offset * 86400000).toISOString();
+  return [
+    { id: "s1", invoice_number: "INV-1004", amount: 450, amount_paid: 0, status: "sent", due_date: d(14), issue_date: d(-1) },
+    { id: "s2", invoice_number: "INV-1003", amount: 1200, amount_paid: 0, status: "overdue", due_date: d(-6), issue_date: d(-36) },
+    { id: "s3", invoice_number: "INV-1002", amount: 350, amount_paid: 350, status: "paid", due_date: d(-40), issue_date: d(-70) },
+    { id: "s4", invoice_number: "INV-1001", amount: 275, amount_paid: 275, status: "paid", due_date: d(-75), issue_date: d(-105) },
+  ];
+}
+
+interface ClientPortalProps {
+  /** Staff preview of the client homepage using sample data. */
+  preview?: boolean;
+}
+
+const ClientPortal = ({ preview = false }: ClientPortalProps) => {
   const { user } = useAuth();
-  const navigate = useNavigate();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [loading, setLoading] = useState(true);
+  const realNavigate = useNavigate();
+  const navigate = (path: string) => {
+    if (!preview) realNavigate(path);
+  };
+  const [invoices, setInvoices] = useState<Invoice[]>(() => (preview ? sampleInvoices() : []));
+  const [loading, setLoading] = useState(!preview);
 
   useEffect(() => {
-    if (user) loadData();
-  }, [user]);
+    if (user && !preview) loadData();
+  }, [user, preview]);
 
   const loadData = async () => {
     setLoading(true);
@@ -75,10 +95,18 @@ const ClientPortal = () => {
   const overdueCount = invoices.filter(i => i.status === "overdue").length;
   const recent = invoices.slice(0, 5);
 
-  const displayName = user?.user_metadata?.full_name || user?.email?.split("@")[0] || "there";
+  const displayName = preview
+    ? SAMPLE_CLIENT.name.split(" ")[0]
+    : user?.user_metadata?.full_name || user?.email?.split("@")[0] || "there";
 
   return (
-    <ClientLayout>
+    <ClientLayout
+      preview={
+        preview
+          ? { clientName: SAMPLE_CLIENT.name, clientEmail: SAMPLE_CLIENT.email, onExit: () => realNavigate("/client-invitations") }
+          : undefined
+      }
+    >
       <div className="space-y-6">
 
         {/* Welcome */}

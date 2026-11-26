@@ -159,6 +159,7 @@ const App = () => (
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/client/:id" element={<ClientDetails />} />
               <Route path="/client-invitations" element={<ClientInvitations />} />
+              <Route path="/client-portal-preview" element={<ClientPortal preview />} />
               <Route path="/messages" element={<Messages />} />
               <Route path="/transactions" element={<Transactions />} />
               <Route path="/bank-transactions" element={<BankTransactions />} />

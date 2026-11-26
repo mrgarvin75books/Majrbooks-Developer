@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Layout from "@/components/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -31,7 +32,7 @@ import {
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
-import { Mail, MoreHorizontal, Send, Trash2, UserPlus, Clock, CheckCircle, XCircle, Copy, Link, Pencil } from "lucide-react";
+import { Mail, MoreHorizontal, Send, Trash2, UserPlus, Clock, CheckCircle, XCircle, Copy, Link, Pencil, Eye } from "lucide-react";
 import { format } from "date-fns";
 
 interface Invitation {
@@ -52,6 +53,7 @@ interface Invitation {
 const ClientInvitations = () => {
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [editingInvitation, setEditingInvitation] = useState<Invitation | null>(null);
@@ -137,7 +139,10 @@ const ClientInvitations = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["client-invitations"] });
-      toast.success("Invitation sent successfully");
+      toast.success("Invitation sent successfully", {
+        description: "See what your client will land on after they accept.",
+        action: { label: "Preview client homepage", onClick: () => navigate("/client-portal-preview") },
+      });
       setIsDialogOpen(false);
       setFormData({ client_name: "", client_email: "", firm_id: user?.id || "", message: "" });
     },
@@ -306,6 +311,11 @@ const ClientInvitations = () => {
               Now new clients can invite you to connect to their MajrBooks using your firm ID. You'll see these invitations listed here.
             </p>
           </div>
+          <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => navigate("/client-portal-preview")}>
+            <Eye className="h-4 w-4 mr-2" />
+            Preview Client Homepage
+          </Button>
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -371,6 +381,7 @@ const ClientInvitations = () => {
               </form>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         {/* Quick Signup Link Generator */}

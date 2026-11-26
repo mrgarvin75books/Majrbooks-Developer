@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { ChatWidget } from "@/components/ChatWidget";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import {
   LayoutDashboard,
   FileText,
@@ -34,15 +35,28 @@ const NAV_ITEMS = [
 
 interface Props {
   children: React.ReactNode;
+  /** Staff-only preview: shows sample client identity and disables navigation. */
+  preview?: { clientName: string; clientEmail: string; onExit: () => void };
 }
 
-const ClientLayout = ({ children }: Props) => {
+const ClientLayout = ({ children, preview }: Props) => {
   const { user, signOut } = useAuth();
-  const navigate = useNavigate();
+  const realNavigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  // In preview mode, client-only pages would redirect staff away, so links are inert.
+  const navigate = (path: string) => {
+    if (preview) {
+      toast.info("Preview only — clients will be able to open this page.");
+      return;
+    }
+    realNavigate(path);
+  };
+  const activePath = preview ? "/client-portal" : location.pathname;
+
   const displayName =
+    preview?.clientName ||
     user?.user_metadata?.full_name ||
     user?.email?.split("@")[0] ||
     "Client";
@@ -56,6 +70,18 @@ const ClientLayout = ({ children }: Props) => {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex flex-col">
+      {preview && (
+        <div className="bg-amber-100 dark:bg-amber-900/40 border-b border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-100">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+            <span>
+              <strong>Preview:</strong> this is the homepage your clients see after accepting an invite. Sample data shown.
+            </span>
+            <Button size="sm" variant="outline" className="h-7 bg-white/70 dark:bg-transparent" onClick={preview.onExit}>
+              Exit Preview
+            </Button>
+          </div>
+        </div>
+      )}
       {/* ── Top Navigation Bar ── */}
       <header className="sticky top-0 z-40 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -79,7 +105,7 @@ const ClientLayout = ({ children }: Props) => {
             {/* Desktop Nav */}
             <nav className="hidden md:flex items-center gap-1">
               {NAV_ITEMS.map((item) => {
-                const active = location.pathname === item.path;
+                const active = activePath === item.path;
                 return (
                   <button
                     key={item.path}
@@ -116,7 +142,7 @@ const ClientLayout = ({ children }: Props) => {
                 <DropdownMenuContent align="end" className="w-48">
                   <div className="px-3 py-2 border-b border-border">
                     <p className="text-xs font-medium text-foreground truncate">{displayName}</p>
-                    <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                    <p className="text-xs text-muted-foreground truncate">{preview?.clientEmail || user?.email}</p>
                   </div>
                   <DropdownMenuItem onClick={() => navigate("/client-settings")}>
                     <Settings className="h-4 w-4 mr-2" />
@@ -124,11 +150,11 @@ const ClientLayout = ({ children }: Props) => {
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
-                    onClick={signOut}
+                    onClick={preview ? preview.onExit : signOut}
                     className="text-red-600 dark:text-red-400 focus:text-red-600"
                   >
                     <LogOut className="h-4 w-4 mr-2" />
-                    Sign Out
+                    {preview ? "Exit Preview" : "Sign Out"}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -148,7 +174,7 @@ const ClientLayout = ({ children }: Props) => {
         {mobileOpen && (
           <div className="md:hidden border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-4 py-3 space-y-1">
             {NAV_ITEMS.map((item) => {
-              const active = location.pathname === item.path;
+              const active = activePath === item.path;
               return (
                 <button
                   key={item.path}
@@ -190,7 +216,7 @@ const ClientLayout = ({ children }: Props) => {
           </div>
         </div>
       </footer>
-      <ChatWidget />
+      {!preview && <ChatWidget />}
     </div>
   );
 };
