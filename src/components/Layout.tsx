@@ -57,6 +57,7 @@ import {
   GraduationCap,
   BookOpen,
   Layers,
+  Inbox,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import majrLogo from "@/assets/logo-majr-books.jpg";
@@ -506,6 +507,7 @@ const Layout = ({ children }: LayoutProps) => {
       items: [
         { id: "clients", path: "/dashboard", label: "Clients", icon: Users },
         { id: "client-invitations", path: "/client-invitations", label: "Client Invitations", icon: UserPlus },
+        { id: "messages", path: "/messages", label: "Messages", icon: Inbox },
         { id: "multi-entity", path: "/multi-entity", label: "Multi-entity", icon: Layers },
       ],
     },

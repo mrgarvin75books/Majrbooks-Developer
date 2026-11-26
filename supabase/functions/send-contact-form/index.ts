@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { Resend } from "https://esm.sh/resend@2.0.0";
+import { serviceClient } from "../_shared/security.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,6 +31,20 @@ const handler = async (req: Request): Promise<Response> => {
     const { name, email, phone, message }: ContactFormRequest = await req.json();
 
     console.log("[SEND-CONTACT-FORM] Processing contact form submission", { name, email, phone });
+
+    // Keep a copy in the MAJRBooks Messages inbox so admins can review and answer it in the app.
+    try {
+      const { error: inboxError } = await serviceClient().rpc("inbox_ingest", {
+        p_name: String(name ?? "").slice(0, 200),
+        p_email: String(email ?? ""),
+        p_subject: `Website inquiry from ${String(name ?? "").slice(0, 200)}`,
+        p_body: `${String(message ?? "").slice(0, 9500)}${phone ? `\n\nPhone: ${String(phone).slice(0, 50)}` : ""}`,
+        p_source: "contact_form",
+      });
+      if (inboxError) console.error("[SEND-CONTACT-FORM] Inbox copy failed:", inboxError.message);
+    } catch (inboxErr) {
+      console.error("[SEND-CONTACT-FORM] Inbox copy failed:", inboxErr);
+    }
 
     // Send notification to support
     const emailResponse = await resend.emails.send({

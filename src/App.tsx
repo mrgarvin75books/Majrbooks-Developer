@@ -105,6 +105,7 @@ import ClientOnboarding from "./pages/ClientOnboarding";
 import ClientSupport from "./pages/ClientSupport";
 import ClientDocuments from "./pages/ClientDocuments";
 import Training from "./pages/Training";
+import Messages from "./pages/Messages";
 
 const queryClient = new QueryClient();
 
@@ -158,6 +159,7 @@ const App = () => (
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/client/:id" element={<ClientDetails />} />
               <Route path="/client-invitations" element={<ClientInvitations />} />
+              <Route path="/messages" element={<Messages />} />
               <Route path="/transactions" element={<Transactions />} />
               <Route path="/bank-transactions" element={<BankTransactions />} />
               <Route path="/invoices" element={<Invoices />} />
