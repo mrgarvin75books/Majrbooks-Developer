@@ -54,7 +54,7 @@ const Messages = () => {
   const selectedId = params.get("thread");
   const [filter, setFilter] = useState<Filter>("open");
   const [search, setSearch] = useState("");
-  const { threads, loading, refresh } = useInboxThreads("inbox", user?.id);
+  const { threads, loading, refresh } = useInboxThreads("inbox", user?.id, isAdmin);
 
   const counts = useMemo(() => ({
     open: threads.filter((t) => t.status === "open").length,

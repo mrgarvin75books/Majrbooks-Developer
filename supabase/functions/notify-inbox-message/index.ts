@@ -125,17 +125,31 @@ serve(async (req) => {
       </div>`;
 
     // Each recipient gets their own email so addresses aren't shared.
+    // Resend reports failures in `error` instead of throwing, so check each result.
+    const resend = new Resend(resendApiKey);
+    const failures: string[] = [];
     for (const to of recipients) {
-      await new Resend(resendApiKey).emails.send({
+      const { error: sendError } = await resend.emails.send({
         from: FROM,
         to: [to],
         subject,
         html,
         ...(REPLY_TO ? { reply_to: REPLY_TO } : {}),
       });
+      if (sendError) {
+        console.error(`[notify-inbox-message] email to ${to} failed:`, JSON.stringify(sendError));
+        failures.push(sendError.message ?? String(sendError));
+      }
     }
 
-    return jsonResponse({ success: true, sent: recipients.length });
+    if (failures.length === recipients.length) {
+      // Nothing went out: release the claim so the notice can be sent again.
+      await admin.from("inbox_messages").update({ notified_at: null }).eq("id", messageId);
+      throw new HttpError(502, `Email could not be sent: ${failures[0]}`);
+    }
+
+    console.log(`[notify-inbox-message] sent ${recipients.length - failures.length}/${recipients.length} for ${messageId}`);
+    return jsonResponse({ success: true, sent: recipients.length - failures.length });
   } catch (error) {
     return errorResponse(error);
   }

@@ -101,7 +101,11 @@ export async function updateThread(
  *  - "mine": conversations the user started (client / firm user in the widget)
  *  - "inbox": conversations the user answers (firm owner, team, admins)
  */
-export function useInboxThreads(scope: "mine" | "inbox", userId: string | null | undefined) {
+export function useInboxThreads(
+  scope: "mine" | "inbox",
+  userId: string | null | undefined,
+  isAdmin = false,
+) {
   const [threads, setThreads] = useState<InboxThread[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -112,13 +116,18 @@ export function useInboxThreads(scope: "mine" | "inbox", userId: string | null |
       return;
     }
     let query = db.from("inbox_threads").select("*").order("last_message_at", { ascending: false }).limit(200);
-    query = scope === "mine"
-      ? query.eq("requester_id", userId)
-      : query.or(`requester_id.is.null,requester_id.neq.${userId}`);
+    if (scope === "mine") {
+      query = query.eq("requester_id", userId);
+    } else if (!isAdmin) {
+      // Firm owners and team members answer their own clients' threads. Threads they
+      // started themselves go to MAJRBooks support (no firm), so they're not inbox items.
+      // Admins answer everything, including test messages they send themselves.
+      query = query.not("firm_owner_id", "is", null);
+    }
     const { data, error } = await query;
     if (!error) setThreads((data ?? []) as InboxThread[]);
     setLoading(false);
-  }, [scope, userId]);
+  }, [scope, userId, isAdmin]);
 
   useEffect(() => {
     refresh();

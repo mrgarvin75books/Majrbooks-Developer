@@ -40,7 +40,7 @@ type Tab = "ai" | "messages";
 type MessagesView = { kind: "list" } | { kind: "new"; draft?: string } | { kind: "thread"; id: string } | { kind: "sent" };
 
 export const ChatWidget = () => {
-  const { user, isClient } = useAuth();
+  const { user, isClient, isAdmin } = useAuth();
   const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [tab, setTab] = useState<Tab>("ai");
@@ -48,7 +48,7 @@ export const ChatWidget = () => {
 
   // Conversations this user started, and (for firm users) the client inbox they answer.
   const mine = useInboxThreads("mine", user?.id);
-  const inbox = useInboxThreads("inbox", user && !isClient ? user.id : null);
+  const inbox = useInboxThreads("inbox", user && !isClient ? user.id : null, isAdmin);
   const myUnread = mine.threads.filter((t) => t.requester_unread).length;
   const inboxUnread = inbox.threads.filter((t) => t.staff_unread).length;
   const totalUnread = myUnread + inboxUnread;
